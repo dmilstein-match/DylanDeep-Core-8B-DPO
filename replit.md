@@ -35,7 +35,7 @@ Preferred communication style: Simple, everyday language.
   - **Gradient Checkpointing**: Trades compute for memory by recomputing activations during backward pass
   - **Rationale**: Full fine-tuning 8B model requires ~40GB+ for model + optimizer states; QLoRA fits comfortably in 40GB GPU
 - Framework: Hugging Face TRL's SFTTrainer + PEFT for LoRA
-  - Uses `tokenizer=tokenizer` parameter (standard for PEFT-enabled SFTTrainer)
+  - Uses `processing_class=tokenizer` (TRL 0.12+ standard for both regular and PEFT-enabled training)
   - Uses `peft_config=LoraConfig(...)` to enable adapter training
   - `formatting_func` returns single concatenated string (prompt + answer)
 - Configuration: 1 epoch, batch size 1 with 8 gradient accumulation steps, learning rate 5e-5

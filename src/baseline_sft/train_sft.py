@@ -83,7 +83,7 @@ def main():
         model=model,
         train_dataset=train_ds,
         formatting_func=formatting_func,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         peft_config=peft_config,
         args=sft_config,
     )
