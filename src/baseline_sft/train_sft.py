@@ -74,7 +74,6 @@ def main():
         learning_rate=5e-5,
         logging_steps=10,
         save_strategy="epoch",
-        max_seq_length=2048,
         gradient_checkpointing=True,
         optim="paged_adamw_8bit",
     )

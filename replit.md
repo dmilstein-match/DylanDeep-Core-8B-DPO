@@ -38,7 +38,6 @@ Preferred communication style: Simple, everyday language.
   - Uses `tokenizer=tokenizer` parameter (standard for PEFT-enabled SFTTrainer)
   - Uses `peft_config=LoraConfig(...)` to enable adapter training
   - `formatting_func` returns single concatenated string (prompt + answer)
-  - `max_seq_length=2048` to truncate long sequences
 - Configuration: 1 epoch, batch size 1 with 8 gradient accumulation steps, learning rate 5e-5
 - Output: LoRA adapter checkpoint in `checkpoints/sft_lora/` (can be merged with base model later if needed)
 
