@@ -31,7 +31,6 @@ def main():
     sft_config = SFTConfig(
         output_dir="checkpoints/sft",
         overwrite_output_dir=True,
-        max_seq_length=2048,
         num_train_epochs=1,
         per_device_train_batch_size=1,
         gradient_accumulation_steps=8,
