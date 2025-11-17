@@ -1,0 +1,201 @@
+You’re running out of GPU memory on the **first optimizer step** – the model + optimizer states don’t fit as a full SFT of an 8B model on a single 40GB GPU with plain Adam.
+
+Below is (1) what I checked in your repo and (2) an exact `train_sft.py` you can drop in that switches to **QLoRA (4-bit + LoRA)** so it actually runs.
+
+---
+
+## 1. Quick repo sanity check
+
+I unzipped and walked your project:
+
+* `src/baseline_sft/prepare_data.py` – correctly creates
+  `data/gsm8k_train.jsonl`, `gsm8k_dev.jsonl`, `gsm8k_test.jsonl`.
+
+* `src/baseline_sft/train_sft.py` – loads
+  `BASE_MODEL = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"`
+  with:
+
+  ```python
+  model = AutoModelForCausalLM.from_pretrained(
+      BASE_MODEL,
+      device_map="auto",
+      torch_dtype="auto",
+  )
+  ```
+
+* `requirements.txt` includes `peft` and `bitsandbytes`, so you’re set up to use **QLoRA** (4-bit + LoRA adapters).
+
+Your current script *does* start training (tokenization, etc.), but dies here:
+
+```text
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 112.00 MiB.
+...
+File ".../torch/optim/adam.py", line 181, in _init_group
+    state["exp_avg_sq"] = torch.zeros_like(
+```
+
+That’s Adam allocating its optimizer states. The GPU is already basically full (~38–39GB used), so the extra ~100MB tips it over.
+
+**Key point:** Reducing batch size or adding gradient checkpointing won’t fix this fully, because optimizer state memory is proportional to *all* parameters. You either:
+
+* Use a smaller model, or
+* Use quantization + LoRA + 8-bit optimizer.
+
+Let’s do the second.
+
+---
+
+## 2. Drop-in fix: QLoRA training script
+
+Replace the contents of `src/baseline_sft/train_sft.py` with this:
+
+```python
+import os
+import json
+from dataclasses import dataclass
+from typing import List
+
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from datasets import load_dataset
+from trl import SFTTrainer, SFTConfig
+from peft import LoraConfig
+
+BASE_MODEL = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
+TRAIN_PATH = "data/gsm8k_train.jsonl"
+OUTPUT_DIR = "checkpoints/sft_lora"  # change to "checkpoints/sft" if you prefer
+
+
+def formatting_func(example):
+    """
+    Format each GSM8K example as a single prompt+answer string.
+    TRL will automatically add EOS token.
+    """
+    question = example["question"]
+    answer = example["answer"]  # already '#### 42' style
+
+    prompt = (
+        "You are a careful math tutor. Solve the problem step-by-step, "
+        "then give the final answer in the format '#### 42'.\n\n"
+        f"Problem:\n{question}\n\nSolution:\n"
+    )
+    return prompt + answer
+
+
+def main():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    print("Loading training data from JSONL...")
+    train_ds = load_dataset("json", data_files=TRAIN_PATH)["train"]
+
+    print("Loading tokenizer & 4-bit base model:", BASE_MODEL)
+    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    # 4-bit quantization config (QLoRA-style)
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_quant_type="nf4",
+    )
+
+    model = AutoModelForCausalLM.from_pretrained(
+        BASE_MODEL,
+        quantization_config=bnb_config,
+        device_map="auto",
+    )
+
+    # LoRA config – small and safe for 8B on 40GB
+    peft_config = LoraConfig(
+        r=32,
+        lora_alpha=16,
+        lora_dropout=0.05,
+        bias="none",
+        task_type="CAUSAL_LM",
+    )
+
+    # SFT training config – tiny batch, 8-bit optimizer
+    sft_config = SFTConfig(
+        output_dir=OUTPUT_DIR,
+        overwrite_output_dir=True,
+        num_train_epochs=1,
+        per_device_train_batch_size=1,
+        gradient_accumulation_steps=8,
+        learning_rate=5e-5,
+        logging_steps=10,
+        save_strategy="epoch",
+        max_seq_length=2048,
+        gradient_checkpointing=True,
+        optim="paged_adamw_8bit",
+    )
+
+    print("Creating SFTTrainer (QLoRA)...")
+    trainer = SFTTrainer(
+        model=model,
+        train_dataset=train_ds,
+        formatting_func=formatting_func,
+        tokenizer=tokenizer,
+        peft_config=peft_config,
+        args=sft_config,
+    )
+
+    print("\nStarting SFT training...\n")
+    trainer.train()
+
+    print("Saving LoRA adapter + tokenizer to:", OUTPUT_DIR)
+    trainer.save_model(OUTPUT_DIR)
+    tokenizer.save_pretrained(OUTPUT_DIR)
+
+    print("\nDone! LoRA SFT model saved.")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+### Why this fixes the OOM
+
+* **4-bit quantization (`BitsAndBytesConfig`)**
+  Shrinks the base 8B model so it easily fits on 40GB.
+* **LoRA (`LoraConfig`)**
+  You only train a small set of adapter weights instead of all 8B parameters.
+* **8-bit optimizer (`optim="paged_adamw_8bit"`)**
+  Keeps optimizer states small and GPU-friendly.
+* **`gradient_checkpointing=True`**
+  Cuts activation memory overhead.
+
+Net effect: you keep the **DeepSeek-R1 8B** as the backbone, but the thing you train is a small LoRA head that comfortably fits in memory.
+
+---
+
+## 3. How to run it now
+
+From the project root:
+
+```bash
+# 1) Make sure deps are installed
+pip install -r requirements.txt
+
+# 2) Make sure data exists (you probably already did this)
+python -m src.baseline_sft.prepare_data
+
+# 3) Run training (now QLoRA-based and memory-safe)
+python -m src.baseline_sft.train_sft
+```
+
+Your checkpoint will end up in `checkpoints/sft_lora/` (or `checkpoints/sft/` if you change `OUTPUT_DIR` back).
+
+---
+
+## ~100-word TL;DR
+
+Your repo is fine; the crash is purely **GPU OOM** from trying to full-fine-tune **DeepSeek-R1 8B** with vanilla Adam on a single 40GB GPU. The failure happens when Adam allocates optimizer states. The fix is to switch to **QLoRA**: load the model in 4-bit with `BitsAndBytesConfig`, train **LoRA adapters** only, and use an 8-bit optimizer (`paged_adamw_8bit`) plus gradient checkpointing. I gave you a drop-in replacement `src/baseline_sft/train_sft.py`. After replacing it, run:
+
+```bash
+python -m src.baseline_sft.prepare_data
+python -m src.baseline_sft.train_sft
+```
+
+and it should train without OOM.
