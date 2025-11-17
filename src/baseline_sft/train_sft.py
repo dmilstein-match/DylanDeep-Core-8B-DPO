@@ -1,35 +1,57 @@
 import os
-from trl import SFTTrainer, SFTConfig
-from transformers import AutoTokenizer, AutoModelForCausalLM
+import json
+from dataclasses import dataclass
+from typing import List
+
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from datasets import load_dataset
+from trl import SFTTrainer, SFTConfig
+
+
+BASE_MODEL = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
+TRAIN_PATH = "data/gsm8k_train.jsonl"
+OUTPUT_DIR = "checkpoints/sft"
+
+
+def formatting_func(example):
+    """
+    TRL 0.9+ requires formatting_func to return:
+    -> List[str]
+       where each string is a FULL combined prompt+target.
+    """
+
+    question = example["question"]
+    answer = example["answer"]  # GSM8K answer already includes #### 42 format
+
+    prompt = (
+        "You are a careful math tutor. Solve the problem step-by-step, "
+        "then give the final answer in the format '#### 42'.\n\n"
+        f"Problem:\n{question}\n\nSolution:\n"
+    )
+
+    full_text = prompt + answer  # Combine into ONE string
+    return [full_text]           # MUST be a list with a single string
+
 
 def main():
-    model_name = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    print("Loading training data from JSONL...")
+    train_ds = load_dataset("json", data_files=TRAIN_PATH)["train"]
+
+    print("Loading tokenizer & model:", BASE_MODEL)
+    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
     tokenizer.pad_token = tokenizer.eos_token
 
     model = AutoModelForCausalLM.from_pretrained(
-        model_name,
+        BASE_MODEL,
         device_map="auto",
         torch_dtype="auto",
     )
 
-    # Load your dataset here
-    ds = load_dataset("json", data_files="data/gsm8k_train.jsonl")["train"]
-
-    # Format function (returns single text string for SFT)
-    def formatting_func(example):
-        prompt = (
-            "You are a careful math tutor. Solve step by step.\n\n"
-            f"Problem:\n{example['question']}\n\nSolution:"
-        )
-        target = example["answer"]
-        return prompt + target
-
-    # TRL v0.9+ config
+    # TRL 0.9+ SFTConfig
     sft_config = SFTConfig(
-        output_dir="checkpoints/sft",
+        output_dir=OUTPUT_DIR,
         overwrite_output_dir=True,
         num_train_epochs=1,
         per_device_train_batch_size=1,
@@ -39,17 +61,23 @@ def main():
         save_strategy="epoch",
     )
 
+    print("Creating SFTTrainer...")
     trainer = SFTTrainer(
         model=model,
         processing_class=tokenizer,
-        train_dataset=ds,
+        train_dataset=train_ds,
         formatting_func=formatting_func,
         args=sft_config,
     )
 
+    print("\nStarting SFT training...\n")
     trainer.train()
-    trainer.save_model("checkpoints/sft")
-    tokenizer.save_pretrained("checkpoints/sft")
+
+    print("Saving SFT checkpoint to:", OUTPUT_DIR)
+    trainer.save_model(OUTPUT_DIR)
+    tokenizer.save_pretrained(OUTPUT_DIR)
+
+    print("\nDone! SFT model saved.")
 
 
 if __name__ == "__main__":
