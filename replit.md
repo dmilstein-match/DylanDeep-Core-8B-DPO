@@ -28,7 +28,8 @@ Preferred communication style: Simple, everyday language.
 - Split: 80% train, 20% validation from training set, separate test set retained
 - Approach: Standard supervised fine-tuning on question-solution pairs
 - Format: Prompts structured as tutoring scenarios with step-by-step solutions ending in `#### [answer]` format
-- Framework: Hugging Face TRL's SFTTrainer
+- Framework: Hugging Face TRL's SFTTrainer with TRL 0.9+ API (SFTConfig + formatting_func)
+- Configuration: 1 epoch, batch size 1 with 8 gradient accumulation steps, learning rate 5e-5
 - Output: Base fine-tuned checkpoint in `checkpoints/sft/`
 
 **Phase 2 - Regime W Coherence Module (Proprietary)**
