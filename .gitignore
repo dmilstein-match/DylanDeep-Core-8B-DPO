@@ -1,0 +1,43 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Data and model files (too large for git)
+data/*.jsonl
+data/*.json
+data/*.txt
+!data/.gitkeep
+
+# Model checkpoints (too large for git)
+checkpoints/*
+!checkpoints/.gitkeep
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Replit
+.replit
+replit.nix
+.config/
+.pythonlibs/

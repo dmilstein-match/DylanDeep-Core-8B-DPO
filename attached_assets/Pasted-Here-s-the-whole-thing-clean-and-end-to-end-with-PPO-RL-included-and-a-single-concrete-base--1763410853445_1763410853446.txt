@@ -1,0 +1,537 @@
+Here’s the whole thing, clean and end-to-end, with **PPO RL included** and a **single concrete base model** choice.
+
+---
+
+## 0. Key Decisions (so we don’t second-guess later)
+
+### 📌 Base model
+
+**Use:** `deepseek-ai/DeepSeek-R1-Distill-Llama-8B`
+
+Why this one:
+
+* **Performance:** Already RL-trained for reasoning & math; very strong CoT out of the box.
+* **Size:** 8B is big enough to be impressive, small enough to train on a single decent Lambda GPU.
+* **License:** DeepSeek R1 distill is released under a permissive license (MIT-style open weights), so you can:
+
+  * fine-tune,
+  * use commercially,
+  * host privately.
+* **Privacy:** You host the weights on your own Lambda box; no calls to external APIs needed.
+
+We’ll treat this as your **Looper-Math-Platinum base.**
+
+---
+
+## 1. Tight Plan (bird’s-eye view)
+
+Think of this as the “one-pager”:
+
+1. **Setup**
+
+   * Private GitHub repo.
+   * Replit for editing.
+   * Lambda GPU box for training.
+
+2. **Baseline SFT (supervised fine-tune)**
+
+   * Take GSM8K train.
+   * Fine-tune DeepSeek R1 8B on nice CoT format.
+   * Get a good “math student” model.
+
+3. **Regime W coherence engine (private)**
+
+   * 8 arms (Wolfram + Maudlin styles).
+   * Compute `s_end`, `s_path`, `s_cf`, `s_wm`.
+   * Combine into a scalar reward signal.
+
+4. **Rollout + Reward Data**
+
+   * For each training question:
+
+     * Generate candidate solutions.
+     * Score them with Regime W + correctness.
+   * Store `(question, output, reward)` tuples.
+
+5. **PPO RL with Regime W reward**
+
+   * Use TRL’s PPOTrainer (or similar).
+   * Policy = SFT model.
+   * Reward = correctness + coherence (`s_wm` etc.).
+   * Train until dev performance stops improving.
+
+6. **Evaluation on GSM8K-Platinum**
+
+   * Single-call model (no Looper at eval).
+   * Compare:
+
+     * Base DeepSeek R1
+     * SFT model
+     * SFT + PPO RL (Looper-Math-Platinum-8B)
+
+7. **IP protection**
+
+   * Keep `regime_w` folder private.
+   * Publicly describe it only as a “proprietary multi-path coherence signal.”
+
+---
+
+## 2. Detailed Step-by-Step Guide (Lambda + Replit)
+
+I’ll write this as if you’re walking through it today.
+
+### Phase 0 – Repo + Environment Setup
+
+#### Step 0.1 – Create GitHub repo
+
+* Name: **`looper-math-platinum-8b`**
+* Make it **private**.
+* Initial structure:
+
+```text
+looper-math-platinum-8b/
+  data/
+  checkpoints/
+  src/
+    __init__.py
+    baseline_sft/
+    rl_training/
+    eval/
+    regime_w/       # PRIVATE coherence logic
+  requirements.txt
+  README.md
+```
+
+In `requirements.txt` put at least:
+
+```txt
+transformers[torch]
+datasets
+accelerate
+peft
+trl
+numpy
+```
+
+(Your dev can refine this.)
+
+---
+
+#### Step 0.2 – Connect Replit
+
+* On Replit:
+
+  * “Create Repl” → “Import from GitHub” → choose `looper-math-platinum-8b`.
+* Now all `src/` code is editable in Replit.
+* Replit is your **editor + git push/pull** surface.
+
+---
+
+#### Step 0.3 – Create Lambda GPU box
+
+On Lambda Cloud (or similar):
+
+1. Spin up a GPU instance (A10 / A100 with 24–40GB VRAM).
+2. SSH in:
+
+```bash
+ssh ubuntu@<your-lambda-ip>
+```
+
+3. Set up environment:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git python3-venv
+
+git clone <your-github-repo-url>
+cd looper-math-platinum-8b
+
+python3 -m venv .venv
+source .venv/bin/activate
+
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+Now Lambda is ready to run any script in `src/`.
+
+---
+
+### Phase 1 – Baseline SFT on GSM8K
+
+#### Step 1.1 – Data prep script
+
+In Replit, create `src/baseline_sft/prepare_data.py` with logic like:
+
+* Download GSM8K original train split (there are HF helpers; your dev will know).
+* Split into train/dev (e.g., 80/20).
+* Save as:
+
+```text
+data/gsm8k_train.jsonl
+data/gsm8k_dev.jsonl
+```
+
+Each line:
+
+```json
+{
+  "id": "...",
+  "question": "...",
+  "answer": "gold solution text or final numeric form"
+}
+```
+
+Push to GitHub; pull on Lambda:
+
+```bash
+cd looper-math-platinum-8b
+git pull
+source .venv/bin/activate
+python -m src.baseline_sft.prepare_data
+```
+
+---
+
+#### Step 1.2 – SFT training script
+
+Create `src/baseline_sft/train_sft.py`:
+
+Key pieces:
+
+* `BASE_MODEL = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"`
+* A function that formats each sample:
+
+```python
+def format_example(example):
+    q = example["question"]
+    a = example["answer"]  # you may want full GSM8K solution or final number
+
+    prompt = (
+        "You are a careful math tutor. Solve the problem step by step, "
+        "then give the final numeric answer.\n\n"
+        f"Problem:\n{q}\n\nSolution:"
+    )
+
+    target = (
+        f"{example['cot'] if 'cot' in example else ''}\n"
+        f"Answer: #### {a}"
+    )
+
+    return {"input_text": prompt, "output_text": target}
+```
+
+* Use TRL’s `SFTTrainer`:
+
+  * Tokenize `input_text` + `output_text`.
+  * Train 1–2 epochs.
+  * Low LR (e.g. 1e-5).
+  * Save to `checkpoints/sft/`.
+
+On Lambda:
+
+```bash
+source .venv/bin/activate
+python -m src.baseline_sft.train_sft
+```
+
+Now you have a **baseline SFT model**.
+
+---
+
+### Phase 2 – Regime W Coherence Module (Private)
+
+This is your secret sauce. It lives in `src/regime_w/`.
+
+#### Step 2.1 – Define arms
+
+In `src/regime_w/arms.py`:
+
+* Implement the **8 arms** (4 “Wolfram” compute variants, 4 “Maudlin” counterfactual/explanation variants) we discussed:
+
+  * Each `ArmSpec` = `{name, system_prompt, user_template, temperature, top_p, seed}`.
+* A helper `build_all_arms()` returns a list of 8 `ArmSpec`.
+
+#### Step 2.2 – Scoring functions
+
+In `src/regime_w/scoring.py`:
+
+Implement:
+
+* `s_end_for_question(answers)` – pairwise agreement (0–1).
+* `s_path_for_question(reasonings, embed)` – cosine similarity of CoT embeddings (0–1).
+* `s_cf_for_question(arm_results, judge_consistency)` – cross-checking Wolfram vs Maudlin explanations (0–1).
+* `s_wm_for_question(...)` – combine:
+
+  ```python
+  s_wm = 0.4 * s_end + 0.3 * s_path + 0.3 * s_cf
+  ```
+
+Use your existing embeddings + consistency judge if you have them.
+
+#### Step 2.3 – Reward wrapper
+
+In `src/regime_w/reward.py`:
+
+Implement:
+
+```python
+def compute_regime_w_scores(question, arm_results, gold_answer=None):
+    # arm_results: list of {answer, reasoning, full_text, spec}
+    # compute s_end, s_path, s_cf, s_wm
+    # optionally correctness if gold_answer is provided
+    return {
+        "s_end": ...,
+        "s_path": ...,
+        "s_cf": ...,
+        "s_wm": ...,
+        "correct_flags": [...],
+    }
+
+def compute_reward(question, arm_results, gold_answer):
+    scores = compute_regime_w_scores(question, arm_results, gold_answer)
+    s_wm = scores["s_wm"]
+    correct_flags = scores["correct_flags"]
+
+    # for now: a simple aggregated correctness
+    correct_any = any(correct_flags)
+
+    base = 1.0 if correct_any else -0.5
+    coherence_bonus = 0.7 * s_wm
+    len_penalty = 0.0  # or -0.001 * max(0, avg_tokens_out - 512)
+
+    return base + coherence_bonus + len_penalty
+```
+
+This returns **one scalar reward** per question (you can extend to per-arm if desired).
+
+> 🔒 **Important:** keep this whole `regime_w` folder private. Never expose it in public repos.
+
+#### Step 2.4 – Sanity check
+
+Add `src/regime_w/demo.py` that:
+
+* Loads the SFT model.
+* Runs 1–2 questions through all 8 arms.
+* Prints `s_wm` and reward.
+
+On Lambda:
+
+```bash
+python -m src.regime_w.demo
+```
+
+If high-agreement questions give high `s_wm`, you’re good.
+
+---
+
+### Phase 3 – Rollout + Reward Collection
+
+We’ll generate trajectories and compute rewards to feed PPO.
+
+#### Step 3.1 – Collect rollouts
+
+Create `src/rl_training/collect_rollouts.py`:
+
+For each question in **GSM8K train** (or a subset to save cost):
+
+1. Build one **standard policy prompt** for DeepSeek R1 SFT model (your “final prompt”).
+
+2. Sample, say, **4 trajectories** with different seeds (for PPO we can work with fewer than 8 here).
+
+3. For each trajectory:
+
+   * Store CoT text and final numeric answer.
+
+4. To compute reward via Regime W:
+
+   * Option A (cheaper): reuse those 4 trajectories as arms directly.
+   * Option B (closer to full Regime W): generate 8 arms specifically using `build_all_arms()`; more expensive.
+
+5. Call `compute_reward(question, arm_results, gold_answer)`.
+
+Write each record to `data/ppo_rollouts.jsonl`:
+
+```json
+{
+  "question": "...",
+  "gold_answer": "...",
+  "trajectories": [
+    {
+      "output": "...full-cot-and-answer...",
+      "final_answer": "...",
+      "reward": 0.73
+    },
+    ...
+  ]
+}
+```
+
+Run on Lambda:
+
+```bash
+python -m src.rl_training.collect_rollouts
+```
+
+---
+
+### Phase 4 – PPO RL with Regime W Reward
+
+We’ll train with TRL’s `PPOTrainer`.
+
+#### Step 4.1 – PPO training script
+
+Create `src/rl_training/train_ppo.py`:
+
+High-level structure:
+
+* Load **policy model** = SFT checkpoint.
+* Load tokenizer.
+* Load rollout dataset from `data/ppo_rollouts.jsonl`.
+* For PPO, we typically:
+
+  * Sample **questions** from the dataset.
+  * For each, generate **new outputs** on the fly with the current policy.
+  * Compute reward for each output using `regime_w.reward.compute_reward`.
+  * Call `ppo_trainer.step(queries, responses, rewards)`.
+
+Pseudocode outline:
+
+```python
+from trl import PPOTrainer, PPOConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+from src.regime_w.reward import compute_reward
+from src.regime_w.arms import build_all_arms
+
+def main():
+    model_name = "checkpoints/sft"  # path to your SFT model
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForCausalLM.from_pretrained(model_name)
+
+    config = PPOConfig(
+        model_name=model_name,
+        learning_rate=5e-6,
+        batch_size=16,
+        mini_batch_size=4,
+        gradient_accumulation_steps=1,
+        target_kl=0.1,
+    )
+
+    ppo_trainer = PPOTrainer(
+        config=config,
+        model=model,
+        tokenizer=tokenizer,
+    )
+
+    # Load GSM8K train questions (or subset)
+    questions = load_your_questions_here()
+
+    for epoch in range(NUM_EPOCHS):
+        for batch in batched(questions, config.batch_size):
+            queries = [build_final_prompt(q) for q in batch]
+
+            # 1) Generate responses with current policy
+            responses = ppo_trainer.generate(queries, max_new_tokens=256)
+
+            # 2) Compute rewards per (question, response)
+            rewards = []
+            for q, resp, gold in zip(batch, responses, gold_answers_for_batch):
+                # Use Regime W to score
+                arm_results = [{"full_text": resp, "answer": extract_answer(resp), "reasoning": resp}]
+                reward = compute_reward(q, arm_results, gold)
+                rewards.append(reward)
+
+            # 3) PPO step
+            ppo_trainer.step(queries, responses, rewards)
+
+    # Save final PPO-trained model
+    ppo_trainer.model.save_pretrained("checkpoints/ppo_rl")
+    tokenizer.save_pretrained("checkpoints/ppo_rl")
+
+if __name__ == "__main__":
+    main()
+```
+
+Your dev will fill in the real `load_your_questions_here`, batching, etc. The key idea: **PPO loop uses Regime W reward**.
+
+Run on Lambda:
+
+```bash
+python -m src.rl_training.train_ppo
+```
+
+Watch GPU usage & training logs; stop when dev accuracy stops improving.
+
+---
+
+### Phase 5 – Evaluation on GSM8K-Platinum
+
+#### Step 5.1 – Eval script
+
+Create `src/eval/eval_platinum.py`:
+
+* Load **three models**:
+
+  * Base DeepSeek R1 8B (optional baseline).
+  * SFT model (`checkpoints/sft`).
+  * PPO RL model (`checkpoints/ppo_rl`).
+
+* Load **GSM8K-Platinum test set**.
+
+* For each question:
+
+  * Construct your **final single prompt**.
+  * Generate **one** answer (no Regime W at eval).
+  * Extract final numeric answer.
+  * Compare to gold using Platinum’s normalization rules.
+
+Print:
+
+* Accuracy for each model.
+* Maybe simple breakdown by difficulty.
+
+On Lambda:
+
+```bash
+python -m src.eval.eval_platinum
+```
+
+Now you know if Looper-Math-Platinum-8B actually beats the base and SFT models.
+
+---
+
+### Phase 6 – IP & Story
+
+#### Step 6.1 – IP protection
+
+* Ensure `src/regime_w/`:
+
+  * never gets pushed to any **public** GitHub,
+  * isn’t included if you share training code.
+* If you open-source anything:
+
+  * Replace `compute_reward` with a stub that says:
+
+    * “Call proprietary coherence service.”
+
+#### Step 6.2 – Story you can tell
+
+You can honestly describe this as:
+
+> “We started from an 8B open math model, fine-tuned it on GSM8K, and then applied PPO RL with a proprietary multi-path coherence reward. The resulting Looper-Math-Platinum-8B model improves GSM8K-Platinum accuracy by X points over the base — using reasoning stability and coherence, not more parameters.”
+
+That hits:
+
+* reasoning,
+* coherence,
+* low cost,
+* and doesn’t leak any of Regime W internals.
+
+---
+
+If you want, next I can draft:
+
+* a **one-pager for your dev** (literal task list in bullet form), or
+* a **short “model card” blurb** describing Looper-Math-Platinum-8B for when you share results.

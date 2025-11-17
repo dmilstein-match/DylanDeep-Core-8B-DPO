@@ -1,0 +1,199 @@
+2. Repo structure to match “the plan”
+
+In Replit (for looper-math-platinum-8b), create this structure:
+
+looper-math-platinum-8b/
+  data/                # will be filled on Lambda
+  checkpoints/         # SFT + PPO models will go here
+  src/
+    __init__.py
+    baseline_sft/
+      __init__.py
+      prepare_data.py
+      train_sft.py
+    rl_training/
+      __init__.py
+      collect_rollouts.py   # later
+      train_ppo.py          # later
+    regime_w/
+      __init__.py
+      arms.py               # later / private
+      scoring.py            # later / private
+      reward.py             # later / private
+      demo.py               # later / private
+    eval/
+      __init__.py
+      eval_platinum.py      # later
+  requirements.txt
+  README.md
+
+
+Right now we only need:
+
+requirements.txt
+
+prepare_data.py
+
+train_sft.py
+
+minimal __init__.py files
+
+Regime W / PPO / eval can come after SFT is running.
+
+3. Files to create now (copy–paste into Replit)
+requirements.txt (matches the plan’s stack)
+transformers[torch]
+datasets
+accelerate
+peft
+trl
+bitsandbytes
+sentencepiece
+numpy
+
+src/__init__.py
+
+Just an empty file (or):
+
+# package marker
+
+
+Same for each subfolder __init__.py.
+
+src/baseline_sft/prepare_data.py
+
+Implements Phase 1.1 (download GSM8K train/dev):
+
+import os
+import json
+from datasets import load_dataset
+
+def main():
+    os.makedirs("data", exist_ok=True)
+
+    # GSM8K main config: train + test
+    ds = load_dataset("gsm8k", "main")
+    train = ds["train"]
+    test = ds["test"]
+
+    # Simple 80/20 split of train into train/dev
+    split_idx = int(0.8 * len(train))
+    train_split = train.select(range(split_idx))
+    dev_split = train.select(range(split_idx, len(train)))
+
+    def dump_jsonl(path, dataset):
+        with open(path, "w", encoding="utf-8") as f:
+            for x in dataset:
+                f.write(json.dumps(x) + "\n")
+
+    dump_jsonl("data/gsm8k_train.jsonl", train_split)
+    dump_jsonl("data/gsm8k_dev.jsonl", dev_split)
+    dump_jsonl("data/gsm8k_test.jsonl", test)
+
+    print("Saved GSM8K train/dev/test JSONL files in data/")
+
+if __name__ == "__main__":
+    main()
+
+
+This gives you exactly what the plan says:
+
+data/gsm8k_train.jsonl
+
+data/gsm8k_dev.jsonl
+
+data/gsm8k_test.jsonl
+
+src/baseline_sft/train_sft.py
+
+Implements Phase 1.2 (SFT on DeepSeek-R1 8B):
+
+import os
+import json
+from dataclasses import dataclass
+from typing import List
+
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from trl import SFTTrainer
+
+BASE_MODEL = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"  # per our plan
+
+DATA_PATH = "data/gsm8k_train.jsonl"
+OUTPUT_DIR = "checkpoints/sft"
+
+@dataclass
+class Example:
+    prompt: str
+    completion: str
+
+def load_examples(path: str) -> List[Example]:
+    examples = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            j = json.loads(line)
+            q = j["question"]
+            # GSM8K "answer" field contains full solution with final "#### 42"
+            a = j["answer"]
+
+            prompt = (
+                "You are a careful math tutor. Solve the problem step by step, "
+                "then give the final numeric answer in the form '#### 42'.\n\n"
+                f"Problem:\n{q}\n\nSolution:"
+            )
+
+            completion = a  # we'll train to emit the GSM8K-style solution
+
+            examples.append(Example(prompt=prompt, completion=completion))
+    return examples
+
+def main():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    print("Loading training data...")
+    data = load_examples(DATA_PATH)
+
+    # Convert to dicts for SFTTrainer
+    train_dataset = [
+        {"text": ex.prompt + "\n" + ex.completion}
+        for ex in data
+    ]
+
+    print("Loading base model:", BASE_MODEL)
+    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    model = AutoModelForCausalLM.from_pretrained(
+        BASE_MODEL,
+        device_map="auto"
+    )
+
+    trainer = SFTTrainer(
+        model=model,
+        tokenizer=tokenizer,
+        train_dataset=train_dataset,
+        dataset_text_field="text",
+        max_seq_length=2048,
+        output_dir=OUTPUT_DIR,
+        packing=True,
+        num_train_epochs=1,
+        learning_rate=1e-5,
+    )
+
+    print("Starting SFT training...")
+    trainer.train()
+    print("Saving SFT checkpoint to", OUTPUT_DIR)
+    trainer.save_model()
+    tokenizer.save_pretrained(OUTPUT_DIR)
+
+if __name__ == "__main__":
+    main()
+
+
+This is directly in line with the plan:
+
+Uses deepseek-ai/DeepSeek-R1-Distill-Llama-8B
+
+SFT on GSM8K train
+
+CoT-style prompt, GSM8K-style answer
