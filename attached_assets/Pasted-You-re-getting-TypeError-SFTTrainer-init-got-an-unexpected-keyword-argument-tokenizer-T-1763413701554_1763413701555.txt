@@ -1,7 +1,40 @@
-import os
+You’re getting:
+
+TypeError: SFTTrainer.__init__() got an unexpected keyword argument 'tokenizer'
+
+
+This happens because you’re using the new TRL version (0.9 / 0.10), where the API changed.
+
+✅ WHAT’S WRONG
+
+Your SFTTrainer(...) call looks something like:
+
+trainer = SFTTrainer(
+    model=model,
+    tokenizer=tokenizer,
+    train_dataset=train_dataset,
+    ...
+)
+
+
+But in the new TRL:
+
+❌ You CANNOT pass tokenizer= directly.
+✔ You MUST pass a ScriptArguments style config.
+✅ HERE IS THE FIX
+
+Open this file:
+
+src/baseline_sft/train_sft.py
+
+
+Find the area where you create the trainer.
+
+Replace the whole block with THIS updated version (works with TRL 0.9+):
+
+✅ PASTE THIS VERSION (copy/paste exactly)
 from trl import SFTTrainer, SFTConfig
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from datasets import load_dataset
 
 def main():
     model_name = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
@@ -16,6 +49,7 @@ def main():
     )
 
     # Load your dataset here
+    from datasets import load_dataset
     ds = load_dataset("json", data_files="data/gsm8k_train.jsonl")["train"]
 
     # Format function (ensure input_ids + labels created)
@@ -55,3 +89,15 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+🔥 WHY THIS WORKS
+
+TRL removed the tokenizer= and dataset_text_field= arguments.
+
+Now the trainer accepts:
+
+formatting_func → returns (prompt, answer)
+
+args=SFTConfig(...) instead of **kwargs
+
+This new version is 100% compliant with current TRL.
