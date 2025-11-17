@@ -23,18 +23,24 @@ Preferred communication style: Simple, everyday language.
 
 ### Training Pipeline Architecture
 
-**Phase 1 - Supervised Fine-Tuning (SFT)**
+**Phase 1 - Supervised Fine-Tuning (SFT) with QLoRA**
 - Dataset: GSM8K mathematical reasoning dataset
 - Split: 80% train, 20% validation from training set, separate test set retained
-- Approach: Standard supervised fine-tuning on question-solution pairs
+- Approach: QLoRA (Quantized Low-Rank Adaptation) for memory-efficient fine-tuning
 - Format: Prompts structured as tutoring scenarios with step-by-step solutions ending in `#### [answer]` format
-- Framework: Hugging Face TRL's SFTTrainer with TRL 0.9+ API
-  - Uses `SFTConfig` for training arguments (no kwargs directly to SFTTrainer)
-  - Uses `processing_class=tokenizer` instead of deprecated `tokenizer=` parameter
+- Memory Optimization Strategy:
+  - **4-bit Quantization**: Base model loaded in 4-bit using `BitsAndBytesConfig` (NF4 quant type, double quantization, bfloat16 compute)
+  - **LoRA Adapters**: Only train small adapter weights (r=32, alpha=16, dropout=0.05) instead of full 8B parameters
+  - **8-bit Optimizer**: Uses `paged_adamw_8bit` to reduce optimizer state memory
+  - **Gradient Checkpointing**: Trades compute for memory by recomputing activations during backward pass
+  - **Rationale**: Full fine-tuning 8B model requires ~40GB+ for model + optimizer states; QLoRA fits comfortably in 40GB GPU
+- Framework: Hugging Face TRL's SFTTrainer + PEFT for LoRA
+  - Uses `tokenizer=tokenizer` parameter (standard for PEFT-enabled SFTTrainer)
+  - Uses `peft_config=LoraConfig(...)` to enable adapter training
   - `formatting_func` returns single concatenated string (prompt + answer)
-  - No max_seq_length parameter (controlled by model's default context length)
+  - `max_seq_length=2048` to truncate long sequences
 - Configuration: 1 epoch, batch size 1 with 8 gradient accumulation steps, learning rate 5e-5
-- Output: Base fine-tuned checkpoint in `checkpoints/sft/`
+- Output: LoRA adapter checkpoint in `checkpoints/sft_lora/` (can be merged with base model later if needed)
 
 **Phase 2 - Regime W Coherence Module (Proprietary)**
 - Architecture: Multi-armed bandit with 8 arms testing different reasoning strategies
@@ -71,9 +77,10 @@ Preferred communication style: Simple, everyday language.
 
 ### Model Checkpointing
 - **Location**: `checkpoints/` directory with subdirectories per training phase
-- **SFT Checkpoints**: Saved in `checkpoints/sft/`
+- **SFT Checkpoints**: LoRA adapters saved in `checkpoints/sft_lora/`
 - **PPO Checkpoints**: Saved in `checkpoints/ppo/`
 - **Strategy**: Incremental saves during training for recovery and comparison
+- **Note**: SFT produces LoRA adapter weights that can be merged with base model or loaded separately for inference
 
 ### Module Organization
 - **baseline_sft/**: Data preparation and supervised fine-tuning scripts
@@ -87,9 +94,9 @@ Preferred communication style: Simple, everyday language.
 - **transformers**: Hugging Face library for model loading, tokenization, and inference
 - **datasets**: Hugging Face library for GSM8K dataset access and preprocessing
 - **trl**: Transformer Reinforcement Learning library (SFTTrainer, PPOTrainer)
-- **peft**: Parameter-efficient fine-tuning techniques (if needed for memory optimization)
+- **peft**: Parameter-efficient fine-tuning library for LoRA adapter training
 - **accelerate**: Distributed training and mixed-precision support
-- **bitsandbytes**: 8-bit quantization for memory efficiency
+- **bitsandbytes**: 4-bit/8-bit quantization for memory-efficient training
 
 ### Core Libraries
 - **torch**: PyTorch deep learning framework (included via transformers[torch])

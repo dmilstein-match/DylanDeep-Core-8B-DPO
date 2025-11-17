@@ -3,33 +3,31 @@ import json
 from dataclasses import dataclass
 from typing import List
 
-from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from datasets import load_dataset
 from trl import SFTTrainer, SFTConfig
-
+from peft import LoraConfig
 
 BASE_MODEL = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
 TRAIN_PATH = "data/gsm8k_train.jsonl"
-OUTPUT_DIR = "checkpoints/sft"
+OUTPUT_DIR = "checkpoints/sft_lora"  # change to "checkpoints/sft" if you prefer
 
 
 def formatting_func(example):
     """
-    Format the example as a single combined prompt+answer string.
+    Format each GSM8K example as a single prompt+answer string.
     TRL will automatically add EOS token.
     """
-
     question = example["question"]
-    answer = example["answer"]  # GSM8K answer already includes #### 42 format
+    answer = example["answer"]  # already '#### 42' style
 
     prompt = (
         "You are a careful math tutor. Solve the problem step-by-step, "
         "then give the final answer in the format '#### 42'.\n\n"
         f"Problem:\n{question}\n\nSolution:\n"
     )
-
-    full_text = prompt + answer  # Combine into ONE string
-    return full_text             # Return string directly, not a list
+    return prompt + answer
 
 
 def main():
@@ -38,17 +36,35 @@ def main():
     print("Loading training data from JSONL...")
     train_ds = load_dataset("json", data_files=TRAIN_PATH)["train"]
 
-    print("Loading tokenizer & model:", BASE_MODEL)
+    print("Loading tokenizer & 4-bit base model:", BASE_MODEL)
     tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
-    tokenizer.pad_token = tokenizer.eos_token
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    # 4-bit quantization config (QLoRA-style)
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_quant_type="nf4",
+    )
 
     model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
+        quantization_config=bnb_config,
         device_map="auto",
-        torch_dtype="auto",
     )
 
-    # TRL 0.9+ SFTConfig
+    # LoRA config – small and safe for 8B on 40GB
+    peft_config = LoraConfig(
+        r=32,
+        lora_alpha=16,
+        lora_dropout=0.05,
+        bias="none",
+        task_type="CAUSAL_LM",
+    )
+
+    # SFT training config – tiny batch, 8-bit optimizer
     sft_config = SFTConfig(
         output_dir=OUTPUT_DIR,
         overwrite_output_dir=True,
@@ -58,25 +74,29 @@ def main():
         learning_rate=5e-5,
         logging_steps=10,
         save_strategy="epoch",
+        max_seq_length=2048,
+        gradient_checkpointing=True,
+        optim="paged_adamw_8bit",
     )
 
-    print("Creating SFTTrainer...")
+    print("Creating SFTTrainer (QLoRA)...")
     trainer = SFTTrainer(
         model=model,
-        processing_class=tokenizer,
         train_dataset=train_ds,
         formatting_func=formatting_func,
+        tokenizer=tokenizer,
+        peft_config=peft_config,
         args=sft_config,
     )
 
     print("\nStarting SFT training...\n")
     trainer.train()
 
-    print("Saving SFT checkpoint to:", OUTPUT_DIR)
+    print("Saving LoRA adapter + tokenizer to:", OUTPUT_DIR)
     trainer.save_model(OUTPUT_DIR)
     tokenizer.save_pretrained(OUTPUT_DIR)
 
-    print("\nDone! SFT model saved.")
+    print("\nDone! LoRA SFT model saved.")
 
 
 if __name__ == "__main__":
