@@ -1,0 +1,135 @@
+Step 2.2 – Add the basic structure
+
+In Replit’s file tree, create:
+
+requirements.txt
+src/
+  __init__.py
+  baseline_sft/
+    __init__.py
+    prepare_data.py
+    train_sft.py
+
+requirements.txt
+transformers[torch]
+datasets
+accelerate
+peft
+trl
+bitsandbytes
+sentencepiece
+numpy
+
+src/__init__.py and src/baseline_sft/__init__.py
+
+Both can just contain:
+
+# package marker
+
+src/baseline_sft/prepare_data.py
+import os
+import json
+from datasets import load_dataset
+
+def main():
+    os.makedirs("data", exist_ok=True)
+
+    ds = load_dataset("gsm8k", "main")
+    train = ds["train"]
+    test = ds["test"]
+
+    split_idx = int(0.8 * len(train))
+    train_split = train.select(range(split_idx))
+    dev_split = train.select(range(split_idx, len(train)))
+
+    def dump_jsonl(path, dataset):
+        with open(path, "w", encoding="utf-8") as f:
+            for x in dataset:
+                f.write(json.dumps(x) + "\n")
+
+    dump_jsonl("data/gsm8k_train.jsonl", train_split)
+    dump_jsonl("data/gsm8k_dev.jsonl", dev_split)
+    dump_jsonl("data/gsm8k_test.jsonl", test)
+
+    print("Saved GSM8K train/dev/test JSONL files in data/")
+
+if __name__ == "__main__":
+    main()
+
+src/baseline_sft/train_sft.py
+import os
+import json
+from dataclasses import dataclass
+from typing import List
+
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from trl import SFTTrainer
+
+BASE_MODEL = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
+DATA_PATH = "data/gsm8k_train.jsonl"
+OUTPUT_DIR = "checkpoints/sft"
+
+@dataclass
+class Example:
+    prompt: str
+    completion: str
+
+def load_examples(path: str) -> List[Example]:
+    examples = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            j = json.loads(line)
+            q = j["question"]
+            a = j["answer"]          # full GSM8K solution (includes ####)
+
+            prompt = (
+                "You are a careful math tutor. Solve the problem step by step, "
+                "then give the final numeric answer in the form '#### 42'.\n\n"
+                f"Problem:\n{q}\n\nSolution:"
+            )
+
+            completion = a
+            examples.append(Example(prompt=prompt, completion=completion))
+    return examples
+
+def main():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    print("Loading training data...")
+    data = load_examples(DATA_PATH)
+
+    train_dataset = [
+        {"text": ex.prompt + "\n" + ex.completion}
+        for ex in data
+    ]
+
+    print("Loading base model:", BASE_MODEL)
+    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    model = AutoModelForCausalLM.from_pretrained(
+        BASE_MODEL,
+        device_map="auto"
+    )
+
+    trainer = SFTTrainer(
+        model=model,
+        tokenizer=tokenizer,
+        train_dataset=train_dataset,
+        dataset_text_field="text",
+        max_seq_length=2048,
+        output_dir=OUTPUT_DIR,
+        packing=True,
+        num_train_epochs=1,
+        learning_rate=1e-5,
+    )
+
+    print("Starting SFT training...")
+    trainer.train()
+    print("Saving SFT checkpoint to", OUTPUT_DIR)
+    trainer.save_model()
+    tokenizer.save_pretrained(OUTPUT_DIR)
+
+if __name__ == "__main__":
+    main()
