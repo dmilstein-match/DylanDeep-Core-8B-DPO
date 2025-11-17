@@ -15,9 +15,8 @@ OUTPUT_DIR = "checkpoints/sft"
 
 def formatting_func(example):
     """
-    TRL 0.9+ requires formatting_func to return:
-    -> List[str]
-       where each string is a FULL combined prompt+target.
+    Format the example as a single combined prompt+answer string.
+    TRL will automatically add EOS token.
     """
 
     question = example["question"]
@@ -30,7 +29,7 @@ def formatting_func(example):
     )
 
     full_text = prompt + answer  # Combine into ONE string
-    return [full_text]           # MUST be a list with a single string
+    return full_text             # Return string directly, not a list
 
 
 def main():
