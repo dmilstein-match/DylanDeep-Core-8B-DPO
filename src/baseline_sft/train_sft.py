@@ -18,14 +18,14 @@ def main():
     # Load your dataset here
     ds = load_dataset("json", data_files="data/gsm8k_train.jsonl")["train"]
 
-    # Format function (ensure input_ids + labels created)
+    # Format function (returns single text string for SFT)
     def formatting_func(example):
         prompt = (
             "You are a careful math tutor. Solve step by step.\n\n"
             f"Problem:\n{example['question']}\n\nSolution:"
         )
         target = example["answer"]
-        return prompt, target
+        return prompt + target
 
     # TRL v0.9+ config
     sft_config = SFTConfig(

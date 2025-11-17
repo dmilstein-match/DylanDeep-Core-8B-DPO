@@ -1,0 +1,28 @@
+dding EOS to train dataset:   0%|                                                      | 0/5978 [00:00<?, ? examples/s]
+Traceback (most recent call last):
+  File "/usr/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/usr/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/home/ubuntu/projects/looper-math-platinum-8b/src/baseline_sft/train_sft.py", line 56, in <module>
+    main()
+  File "/home/ubuntu/projects/looper-math-platinum-8b/src/baseline_sft/train_sft.py", line 42, in main
+    trainer = SFTTrainer(
+  File "/home/ubuntu/projects/.venv/lib/python3.10/site-packages/trl/trainer/sft_trainer.py", line 805, in __init__
+    train_dataset = self._prepare_dataset(
+  File "/home/ubuntu/projects/.venv/lib/python3.10/site-packages/trl/trainer/sft_trainer.py", line 938, in _prepare_dataset
+    dataset = dataset.map(
+  File "/home/ubuntu/projects/.venv/lib/python3.10/site-packages/datasets/arrow_dataset.py", line 562, in wrapper
+    out: Union["Dataset", "DatasetDict"] = func(self, *args, **kwargs)
+  File "/home/ubuntu/projects/.venv/lib/python3.10/site-packages/datasets/arrow_dataset.py", line 3341, in map
+    for rank, done, content in Dataset._map_single(**unprocessed_kwargs):
+  File "/home/ubuntu/projects/.venv/lib/python3.10/site-packages/datasets/arrow_dataset.py", line 3673, in _map_single
+    for i, example in iter_outputs(shard_iterable):
+  File "/home/ubuntu/projects/.venv/lib/python3.10/site-packages/datasets/arrow_dataset.py", line 3647, in iter_outputs
+    yield i, apply_function(example, i, offset=offset)
+  File "/home/ubuntu/projects/.venv/lib/python3.10/site-packages/datasets/arrow_dataset.py", line 3570, in apply_function
+    processed_inputs = function(*fn_args, *additional_args, **fn_kwargs)
+  File "/home/ubuntu/projects/.venv/lib/python3.10/site-packages/trl/trainer/sft_trainer.py", line 932, in add_eos
+    if "text" in example and not example["text"].endswith(eos_token):  # language modeling case
+AttributeError: 'list' object has no attribute 'endswith'
+(.venv) ubuntu@129-146-54-95:~/projects/looper-math-platinum-8b$
