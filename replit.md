@@ -28,7 +28,11 @@ Preferred communication style: Simple, everyday language.
 - Split: 80% train, 20% validation from training set, separate test set retained
 - Approach: Standard supervised fine-tuning on question-solution pairs
 - Format: Prompts structured as tutoring scenarios with step-by-step solutions ending in `#### [answer]` format
-- Framework: Hugging Face TRL's SFTTrainer with TRL 0.9+ API (SFTConfig + formatting_func)
+- Framework: Hugging Face TRL's SFTTrainer with TRL 0.9+ API
+  - Uses `SFTConfig` for training arguments (no kwargs directly to SFTTrainer)
+  - Uses `processing_class=tokenizer` instead of deprecated `tokenizer=` parameter
+  - `formatting_func` returns single concatenated string (prompt + answer)
+  - No max_seq_length parameter (controlled by model's default context length)
 - Configuration: 1 epoch, batch size 1 with 8 gradient accumulation steps, learning rate 5e-5
 - Output: Base fine-tuned checkpoint in `checkpoints/sft/`
 
