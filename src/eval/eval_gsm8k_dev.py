@@ -3,7 +3,7 @@ import re
 from typing import List, Dict
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from peft import AutoPeftModelForCausalLM
+from peft import PeftModel
 
 DEV_PATH = "data/gsm8k_dev.jsonl"
 
@@ -64,13 +64,15 @@ def eval_base_model():
 
         prompt = build_prompt(q)
         inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+        input_length = inputs["input_ids"].shape[1]
         gen = model.generate(
             **inputs,
             max_new_tokens=256,
             temperature=0.6,
             top_p=0.9,
         )
-        text = tokenizer.decode(gen[0], skip_special_tokens=True)
+        response_ids = gen[0][input_length:]
+        text = tokenizer.decode(response_ids, skip_special_tokens=True)
         pred = extract_answer(text)
         gold_num = extract_answer(gold)
 
@@ -86,15 +88,19 @@ def eval_base_model():
 
 def eval_lora_sft_model():
     label = "LoRA SFT model"
-    model_path = "checkpoints/sft_lora"
+    base_model_name = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
+    lora_path = "checkpoints/sft_lora"
 
-    print(f"Evaluating {label} from {model_path}")
-    # For PEFT models, load with AutoPeftModelForCausalLM
-    model = AutoPeftModelForCausalLM.from_pretrained(
-        model_path,
+    print(f"Evaluating {label} from {lora_path}")
+    tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+    
+    base_model = AutoModelForCausalLM.from_pretrained(
+        base_model_name,
         device_map="auto",
+        load_in_8bit=True,
     )
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    model = PeftModel.from_pretrained(base_model, lora_path)
+    model.eval()
 
     dev = load_dev(DEV_PATH)
     dev = dev[:50]  # same subset for fair comparison
@@ -107,13 +113,15 @@ def eval_lora_sft_model():
 
         prompt = build_prompt(q)
         inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+        input_length = inputs["input_ids"].shape[1]
         gen = model.generate(
             **inputs,
             max_new_tokens=256,
             temperature=0.6,
             top_p=0.9,
         )
-        text = tokenizer.decode(gen[0], skip_special_tokens=True)
+        response_ids = gen[0][input_length:]
+        text = tokenizer.decode(response_ids, skip_special_tokens=True)
         pred = extract_answer(text)
         gold_num = extract_answer(gold)
 

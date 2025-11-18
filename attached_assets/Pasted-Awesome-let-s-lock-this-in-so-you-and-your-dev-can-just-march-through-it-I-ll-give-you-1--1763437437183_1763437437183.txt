@@ -1,0 +1,492 @@
+Awesome, let’s lock this in so you and your dev can just march through it.
+
+I’ll give you:
+
+1. **A concrete dev checklist** (Replit + Lambda, file-by-file, command-by-command).
+2. **Concrete LoRA configs** for DeepSeek-R1-Distill-Llama-8B (with a “safe baseline” and a “spicier” version).
+
+---
+
+## 1️⃣ Dev Checklist – “Do this, then this”
+
+Assumptions:
+
+* Repo: `looper-math-platinum-8b`
+* Base model: `deepseek-ai/DeepSeek-R1-Distill-Llama-8B`
+* You already have Lambda + venv roughly working.
+
+I’ll break it into phases. You can literally paste each phase to your dev as a TODO block.
+
+---
+
+### Phase 0 – Repo + Environment sanity
+
+**On Replit**
+
+1. Open the GitHub repo: `looper-math-platinum-8b`.
+
+2. Ensure structure looks like:
+
+   ```text
+   looper-math-platinum-8b/
+     data/
+     checkpoints/
+     src/
+       __init__.py
+       baseline_sft/
+       rl_training/
+       eval/
+       regime_w/
+     requirements.txt
+     README.md
+   ```
+
+3. In `requirements.txt` (or equivalent) ensure at least:
+
+   ```txt
+   torch
+   transformers[torch]
+   accelerate
+   datasets
+   peft
+   trl
+   bitsandbytes
+   numpy
+   ```
+
+**On Lambda (SSH)**
+
+```bash
+cd ~/projects/looper-math-platinum-8b
+source ~/projects/.venv/bin/activate  # adjust if venv path differs
+pip install -r requirements.txt
+```
+
+---
+
+### Phase 1 – GSM8K data prep
+
+**File: `src/baseline_sft/prepare_data.py`**
+
+Tasks for dev:
+
+1. Use `datasets.load_dataset("gsm8k", "main")`.
+2. Split train into 80% train / 20% dev.
+3. Save to JSONL:
+
+   * `data/gsm8k_train.jsonl`
+   * `data/gsm8k_dev.jsonl`
+
+Each line must at least have:
+
+```json
+{
+  "question": "...",
+  "answer": "full GSM8K solution text with #### 42"
+}
+```
+
+**Run on Lambda:**
+
+```bash
+python -m src.baseline_sft.prepare_data
+ls data
+# expect gsm8k_train.jsonl, gsm8k_dev.jsonl
+```
+
+---
+
+### Phase 2 – QLoRA SFT (baseline student)
+
+**Goal:** Train a GSM8K-style LoRA adapter on top of DeepSeek-R1-8B.
+
+**File: `src/baseline_sft/train_sft.py`**
+
+Dev tasks:
+
+1. Set constants:
+
+   ```python
+   BASE_MODEL = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
+   TRAIN_PATH = "data/gsm8k_train.jsonl"
+   OUTPUT_DIR = "checkpoints/lora_sft"
+   ```
+
+2. Load tokenizer:
+
+   ```python
+   tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
+   tokenizer.pad_token = tokenizer.eos_token
+   ```
+
+3. Load base model in 8-bit:
+
+   ```python
+   from transformers import AutoModelForCausalLM
+   from peft import LoraConfig, get_peft_model
+
+   base_model = AutoModelForCausalLM.from_pretrained(
+       BASE_MODEL,
+       device_map="auto",
+       load_in_8bit=True,
+   )
+   base_model.gradient_checkpointing_enable()
+   ```
+
+4. Apply LoRA (I’ll give exact config in section 2):
+
+   ```python
+   lora_config = LoraConfig(
+       r=64,
+       lora_alpha=16,
+       lora_dropout=0.05,
+       bias="none",
+       task_type="CAUSAL_LM",
+       target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+   )
+
+   model = get_peft_model(base_model, lora_config)
+   ```
+
+5. Load train dataset from `TRAIN_PATH` using `load_dataset("json", ...)["train"]`.
+
+6. Implement `formatting_func(example)`:
+
+   ```python
+   def formatting_func(example):
+       q = example["question"]
+       a = example["answer"]  # includes #### 42
+
+       prompt = (
+           "You are a careful math tutor. Solve the problem step-by-step, "
+           "then give the final answer in the format '#### 42'.\n\n"
+           f"Problem:\n{q}\n\nSolution:\n"
+       )
+       full_text = prompt + a
+       return {"text": full_text}
+   ```
+
+7. Create `SFTConfig` & `SFTTrainer`:
+
+   ```python
+   from trl import SFTConfig, SFTTrainer
+
+   sft_config = SFTConfig(
+       output_dir=OUTPUT_DIR,
+       overwrite_output_dir=True,
+       num_train_epochs=1,
+       per_device_train_batch_size=1,
+       gradient_accumulation_steps=8,
+       learning_rate=5e-5,
+       logging_steps=20,
+       save_strategy="epoch",
+       max_seq_length=1024,
+   )
+
+   trainer = SFTTrainer(
+       model=model,
+       tokenizer=tokenizer,
+       train_dataset=train_ds,
+       formatting_func=formatting_func,
+       args=sft_config,
+   )
+
+   trainer.train()
+   model.save_pretrained(OUTPUT_DIR)
+   tokenizer.save_pretrained(OUTPUT_DIR)
+   ```
+
+**Run on Lambda:**
+
+```bash
+python -m src.baseline_sft.train_sft
+# watch loss + ensure it finishes, creating checkpoints/lora_sft
+```
+
+---
+
+### Phase 3 – Regime W module (private scoring)
+
+**Folder: `src/regime_w/`**
+
+Dev tasks (high-level, you own the internals):
+
+1. `arms.py`:
+
+   * Define `ArmSpec` dataclass (name, system_prompt, temp, top_p).
+   * Implement `build_all_arms()` that returns 8 arm specs (4 “compute”, 4 “reflective”).
+
+2. `scoring.py`:
+
+   * Implement:
+
+     * `s_end_for_question(answers: List[str]) -> float`
+     * `s_path_for_question(reasonings: List[str]) -> float`
+     * `s_cf_for_question(arm_outputs: List[Dict]) -> float`
+     * `s_wm_for_question(s_end, s_path, s_cf) -> float`
+
+3. `reward.py`:
+
+   * Implement:
+
+     ```python
+     def compute_reward(question, arm_outputs, gold_answer) -> float:
+         # arm_outputs: list of { "answer": str, "reasoning": str, "full_text": str }
+         # 1) correctness flags
+         # 2) s_end / s_path / s_cf / s_wm
+         # 3) length penalty
+         # return scalar reward
+     ```
+
+4. `demo.py`:
+
+   * Hardcode a toy question + 2–3 fake arm_outputs, call `compute_reward`, print result.
+   * Confirm it runs on Lambda.
+
+**Run on Lambda:**
+
+```bash
+python -m src.regime_w.demo
+```
+
+---
+
+### Phase 4 – Rollout collection with SFT LoRA model
+
+**File: `src/rl_training/collect_rollouts.py`**
+
+Dev tasks:
+
+1. Load GSM8K train JSONL (same as SFT):
+
+   ```python
+   ds = load_dataset("json", data_files=TRAIN_PATH)["train"]
+   ```
+
+2. Load **base + SFT LoRA adapter**:
+
+   ```python
+   from peft import PeftModel
+
+   base = AutoModelForCausalLM.from_pretrained(BASE_MODEL, load_in_8bit=True, device_map="auto")
+   model = PeftModel.from_pretrained(base, "checkpoints/lora_sft")
+   model.eval()
+   ```
+
+3. For each question (start with subset, e.g. first 1k for testing):
+
+   * Build final prompt (same as SFT).
+   * Sample, say, 4‒8 trajectories with different temperatures/seeds.
+   * Extract:
+
+     * full output
+     * `reasoning` (same as full output to start)
+     * `answer` (parse after `####`).
+
+4. Call Regime W:
+
+   ```python
+   from src.regime_w.reward import compute_reward
+
+   reward = compute_reward(question, arm_outputs, gold_answer)
+   ```
+
+   Here `arm_outputs` is list of dicts for all trajectories.
+
+5. Write each record to `data/rl_rollouts.jsonl`.
+
+**Run on Lambda:**
+
+```bash
+python -m src.rl_training.collect_rollouts
+```
+
+---
+
+### Phase 5 – Build preference pairs (for DPO/GRPO-style RL)
+
+**File: `src/rl_training/build_preferences.py`**
+
+Dev tasks:
+
+1. Read `data/rl_rollouts.jsonl`.
+
+2. For each question:
+
+   * Sort trajectories by reward.
+   * If there’s a clear best and worst, emit:
+
+     ```json
+     {
+       "question": "...",
+       "better": "full text of higher-reward trajectory",
+       "worse": "full text of lower-reward trajectory"
+     }
+     ```
+
+3. Save to `data/preferences.jsonl`.
+
+**Run on Lambda:**
+
+```bash
+python -m src.rl_training.build_preferences
+```
+
+---
+
+### Phase 6 – RL finetune (DPO/GRPO) with LoRA
+
+**File: `src/rl_training/train_rl.py`**
+
+Dev tasks:
+
+1. Load base + SFT LoRA as **policy model**.
+
+   ```python
+   base = AutoModelForCausalLM.from_pretrained(BASE_MODEL, load_in_8bit=True, device_map="auto")
+   policy = PeftModel.from_pretrained(base, "checkpoints/lora_sft")
+   policy.gradient_checkpointing_enable()
+   ```
+
+2. Load separate base + SFT LoRA as **reference model** (frozen):
+
+   ```python
+   ref_base = AutoModelForCausalLM.from_pretrained(BASE_MODEL, load_in_8bit=True, device_map="auto")
+   ref_model = PeftModel.from_pretrained(ref_base, "checkpoints/lora_sft")
+   ref_model.eval()
+   for p in ref_model.parameters():
+       p.requires_grad = False
+   ```
+
+3. Load `data/preferences.jsonl` as dataset.
+
+4. Use TRL’s `DPOTrainer` (or equivalent) with:
+
+   * policy model
+   * reference model
+   * tokenizer
+   * dataset with fields: `prompt` (question), `chosen` (better), `rejected` (worse)
+   * small LR like `5e-6`
+   * batch size small (policy lives in 8-bit with LoRA)
+
+5. Train 1–2 epochs, save LoRA RL adapter:
+
+   ```python
+   policy.save_pretrained("checkpoints/lora_rl")
+   tokenizer.save_pretrained("checkpoints/lora_rl")
+   ```
+
+**Run on Lambda:**
+
+```bash
+python -m src.rl_training.train_rl
+```
+
+---
+
+### Phase 7 – Evaluation (GSM8K dev + GSM8K-Platinum)
+
+**File: `src/eval/eval_gsm8k.py`**
+
+1. Load:
+
+   * Base only
+   * Base + `lora_sft`
+   * Base + `lora_rl`
+
+2. Evaluate each on `data/gsm8k_dev.jsonl`:
+
+   * Single prompt, single answer
+   * Extract final numeric answer from `####`
+   * Compute accuracy
+
+**File: `src/eval/eval_platinum.py`**
+
+1. Load GSM8K-Platinum dataset (MadryLab HF).
+2. Use the **RL model** only (base + `lora_rl`).
+3. Same eval pipeline.
+
+Run both scripts, log results.
+
+---
+
+## 2️⃣ LoRA Configs for DeepSeek-R1-Distill-Llama-8B
+
+DeepSeek-R1-distill is LLaMA-like, so we can use standard LoRA targets.
+
+### A. Safe baseline config (what I recommend you start with)
+
+```python
+from peft import LoraConfig
+
+lora_config = LoraConfig(
+    r=64,                   # rank (capacity of adapters)
+    lora_alpha=16,          # scaling
+    lora_dropout=0.05,      # regularization
+    bias="none",
+    task_type="CAUSAL_LM",
+    target_modules=[
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+        "gate_proj",
+        "up_proj",
+        "down_proj",
+    ],
+)
+```
+
+**Why this is good:**
+
+* r=64 is strong enough to move an 8B model without overfitting too hard.
+* We hit all the main linear layers in the transformer block:
+
+  * attention projections (`q/k/v/o`)
+  * MLP layers (`gate/up/down`)
+* Works well in practice for LLaMA-like architectures.
+
+### B. More aggressive config (if VRAM allows and you want max expressivity)
+
+```python
+lora_config = LoraConfig(
+    r=128,
+    lora_alpha=32,
+    lora_dropout=0.05,
+    bias="none",
+    task_type="CAUSAL_LM",
+    target_modules=[
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+        "gate_proj",
+        "up_proj",
+        "down_proj",
+    ],
+)
+```
+
+Use this **only if**:
+
+* You’re stable on VRAM after SFT,
+* You want to squeeze extra juice in RL.
+
+### C. If target module names don’t line up
+
+On Lambda, you (or dev) can run:
+
+```python
+for name, module in base_model.named_modules():
+    if "proj" in name or "gate" in name or "up" in name or "down" in name:
+        print(name)
+```
+
+and adjust `target_modules` accordingly. But for DeepSeek-R1-distill, the LLaMA-style names above are very likely correct.
+
+---
+
+If you’d like, next I can:
+
+* Draft a **short README “Methods” section** that describes this whole LoRA + Regime W GSM8K-Platinum pipeline in a publishable way (without leaking IP), or
+* Help you define the **exact reward formula** for Regime W in code form so your dev isn’t guessing.

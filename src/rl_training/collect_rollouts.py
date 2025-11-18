@@ -1,11 +1,11 @@
 import json
 from typing import List, Dict
 
-from transformers import AutoTokenizer
-from peft import AutoPeftModelForCausalLM
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft import PeftModel
 
 from src.regime_w.arms import build_all_arms
-from src.regime_w.reward import compute_reward, extract_answer
+from src.regime_w.reward import Trajectory, compute_rewards_for_question, extract_answer
 
 DATA_PATH = "data/gsm8k_train.jsonl"
 SFT_PATH = "checkpoints/sft_lora"
@@ -42,11 +42,16 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    print("Loading LoRA SFT model from", SFT_PATH)
-    model = AutoPeftModelForCausalLM.from_pretrained(
-        SFT_PATH,
+    print("Loading base model in 8-bit...")
+    base_model = AutoModelForCausalLM.from_pretrained(
+        BASE_MODEL,
         device_map="auto",
+        load_in_8bit=True,
     )
+
+    print("Loading LoRA SFT adapter from", SFT_PATH)
+    model = PeftModel.from_pretrained(base_model, SFT_PATH)
+    model.eval()
 
     arms = build_all_arms()
     print(f"Built {len(arms)} arms.")
@@ -56,12 +61,13 @@ def main():
             q = ex["question"]
             gold = ex["answer"]
 
-            arm_outputs = []
+            trajectories = []
 
             for arm in arms:
                 prompt = build_prompt(arm.system_prompt, q)
                 inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
                 input_length = inputs["input_ids"].shape[1]
+                
                 gen = model.generate(
                     **inputs,
                     max_new_tokens=256,
@@ -69,24 +75,36 @@ def main():
                     top_p=arm.top_p,
                     pad_token_id=tokenizer.eos_token_id,
                 )
+                
                 response_ids = gen[0][input_length:]
                 text = tokenizer.decode(response_ids, skip_special_tokens=True)
                 ans = extract_answer(text)
+                num_tokens = len(response_ids)
 
-                arm_outputs.append({
-                    "arm_name": arm.name,
-                    "full_text": text,
-                    "reasoning": text,
-                    "answer": ans,
+                trajectory = Trajectory(
+                    text=text,
+                    reasoning=text,
+                    answer=ans,
+                    num_tokens=num_tokens
+                )
+                trajectories.append(trajectory)
+
+            rewards = compute_rewards_for_question(q, trajectories, gold)
+
+            trajectory_records = []
+            for traj, reward in zip(trajectories, rewards):
+                trajectory_records.append({
+                    "text": traj.text,
+                    "reasoning": traj.reasoning,
+                    "answer": traj.answer,
+                    "num_tokens": traj.num_tokens,
+                    "reward": reward,
                 })
-
-            reward = compute_reward(q, arm_outputs, gold)
 
             record = {
                 "question": q,
                 "gold_answer": gold,
-                "arm_outputs": arm_outputs,
-                "reward": reward,
+                "trajectories": trajectory_records,
             }
             out_f.write(json.dumps(record) + "\n")
 

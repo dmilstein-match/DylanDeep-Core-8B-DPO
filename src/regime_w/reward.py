@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import List, Dict, Optional
 import re
 
@@ -7,6 +8,21 @@ from .scoring import (
     s_cf_for_question,
     s_wm_for_question,
 )
+
+
+ALPHA_CORRECT = 1.0
+BETA_COHERENCE = 0.5
+LENGTH_PENALTY_PER_TOKEN = 0.001
+LENGTH_PENALTY_THRESHOLD = 512
+FULL_AGREEMENT_BONUS = 0.2
+
+
+@dataclass
+class Trajectory:
+    text: str
+    reasoning: str
+    answer: str
+    num_tokens: int
 
 
 def extract_answer(text: str) -> str:
@@ -27,39 +43,88 @@ def extract_answer(text: str) -> str:
     return text.strip()
 
 
-def compute_regime_w_scores(
-    question: str,
-    arm_outputs: List[Dict],
-    gold_answer: Optional[str] = None,
-) -> Dict:
+def normalize_answer(ans: str) -> str:
     """
-    arm_outputs: list of dicts with keys:
-      - "answer"
-      - "reasoning"
-      - "full_text"
-      - "arm_name" (optional, for logging)
+    Simple normalization for answer comparison.
     """
-    answers = [a["answer"] for a in arm_outputs]
-    reasonings = [a["reasoning"] for a in arm_outputs]
+    return ans.strip().lower()
+
+
+def compute_regime_w_metrics(question: str, trajectories: List[Trajectory]) -> Dict:
+    """
+    Compute question-level coherence metrics from all trajectories.
+    """
+    answers = [t.answer for t in trajectories]
+    reasonings = [t.reasoning for t in trajectories]
+    
+    arm_outputs = [
+        {"answer": t.answer, "reasoning": t.reasoning, "full_text": t.text}
+        for t in trajectories
+    ]
 
     s_end = s_end_for_question(answers)
     s_path = s_path_for_question(reasonings)
     s_cf = s_cf_for_question(arm_outputs)
     s_wm = s_wm_for_question(s_end, s_path, s_cf)
 
-    correct_flags: List[bool] = []
-    if gold_answer is not None:
-        gold = extract_answer(gold_answer)
-        for ans in answers:
-            correct_flags.append(extract_answer(ans) == gold)
-
     return {
         "s_end": s_end,
         "s_path": s_path,
         "s_cf": s_cf,
         "s_wm": s_wm,
-        "correct_flags": correct_flags,
     }
+
+
+def compute_rewards_for_question(
+    question: str,
+    trajectories: List[Trajectory],
+    gold_answer: str,
+) -> List[float]:
+    """
+    Given one question, a list of trajectories from the policy,
+    and the gold answer, return a reward per trajectory.
+    
+    This is the core Regime W -> scalar reward mapping.
+    """
+    gold = normalize_answer(extract_answer(gold_answer))
+    correct_flags = []
+    for t in trajectories:
+        pred = normalize_answer(extract_answer(t.answer))
+        correct_flags.append(1.0 if pred == gold and gold != "" else 0.0)
+
+    metrics = compute_regime_w_metrics(question, trajectories)
+    s_end = metrics.get("s_end", 0.0)
+    s_path = metrics.get("s_path", 0.0)
+    s_cf = metrics.get("s_cf", 0.0)
+    s_wm = metrics.get("s_wm", 0.0)
+
+    any_correct = any(c > 0.5 for c in correct_flags)
+    all_correct_same_answer = False
+    if any_correct:
+        correct_answers = {
+            normalize_answer(extract_answer(t.answer))
+            for t, c in zip(trajectories, correct_flags)
+            if c > 0.5
+        }
+        all_correct_same_answer = len(correct_answers) == 1
+
+    rewards: List[float] = []
+    for t, correct in zip(trajectories, correct_flags):
+        base = ALPHA_CORRECT * correct
+
+        coherence_term = BETA_COHERENCE * s_wm
+
+        extra_tokens = max(0, t.num_tokens - LENGTH_PENALTY_THRESHOLD)
+        length_penalty = LENGTH_PENALTY_PER_TOKEN * float(extra_tokens)
+
+        agreement_bonus = 0.0
+        if correct > 0.5 and all_correct_same_answer and s_end > 0.9:
+            agreement_bonus = FULL_AGREEMENT_BONUS
+
+        reward = base + coherence_term + agreement_bonus - length_penalty
+        rewards.append(reward)
+
+    return rewards
 
 
 def compute_reward(
@@ -68,24 +133,21 @@ def compute_reward(
     gold_answer: Optional[str] = None,
 ) -> float:
     """
-    Regime W scalar reward:
-      - base: correctness across arms
-      - + coherence bonus
-      - + mild length penalty
+    Legacy function for backward compatibility.
+    Converts arm_outputs to Trajectory objects and returns single reward.
     """
-    scores = compute_regime_w_scores(question, arm_outputs, gold_answer)
-    s_wm = scores["s_wm"]
-    correct_flags = scores["correct_flags"]
-
-    correct_any = any(correct_flags) if correct_flags else False
-
-    base = 1.0 if correct_any else -0.5
-    coherence_bonus = 0.7 * s_wm
-
-    avg_len = sum(
-        len(a["full_text"].split()) for a in arm_outputs
-    ) / max(1, len(arm_outputs))
-    len_penalty = -0.001 * max(0, avg_len - 400)
-
-    reward = base + coherence_bonus + len_penalty
-    return reward
+    trajectories = [
+        Trajectory(
+            text=a.get("full_text", ""),
+            reasoning=a.get("reasoning", ""),
+            answer=a.get("answer", ""),
+            num_tokens=len(a.get("full_text", "").split())
+        )
+        for a in arm_outputs
+    ]
+    
+    if gold_answer is None:
+        gold_answer = ""
+    
+    rewards = compute_rewards_for_question(question, trajectories, gold_answer)
+    return sum(rewards) / len(rewards) if rewards else 0.0

@@ -2,24 +2,26 @@
 
 ## Overview
 
-Private research project for fine-tuning DeepSeek-R1-Distill-Llama-8B on mathematical reasoning tasks using GSM8K dataset. The system implements a three-phase training pipeline: baseline supervised fine-tuning (SFT), proprietary multi-armed bandit coherence evaluation (Regime W), and reinforcement learning optimization via PPO. The goal is to create a high-performance, privately-hosted math reasoning model with enhanced coherence scoring.
+Private research project for fine-tuning DeepSeek-R1-Distill-Llama-8B on mathematical reasoning tasks using GSM8K dataset. The system implements a three-phase training pipeline: baseline supervised fine-tuning (SFT), proprietary multi-armed bandit coherence evaluation (Regime W), and preference-based reinforcement learning optimization via DPO. The goal is to create a high-performance, privately-hosted math reasoning model with enhanced coherence scoring.
 
 ## Current Status (November 18, 2025)
 
 **Completed:**
 - ✅ Phase 1: SFT with QLoRA - Successfully trained on Lambda GPU, LoRA adapters saved to `checkpoints/sft_lora/`
-- ✅ Phase 2: Regime W Coherence Module - Fully implemented with 8-arm bandit, scoring metrics (s_end, s_path, s_cf, s_wm), and reward computation
-- ✅ Phase 3: Multi-arm rollout collection script - Generates 8 solutions per question and computes Regime W rewards
-- ✅ Phase 4: PPO training script - Uses TRL PPOTrainer with offline Regime W rollouts
-- ✅ Phase 5: Final evaluation script - Compares Base vs SFT vs PPO on GSM8K test set
+- ✅ Phase 2: Regime W Coherence Module - Fully implemented with 8-arm bandit, scoring metrics (s_end, s_path, s_cf, s_wm), and per-trajectory reward computation
+- ✅ Phase 3: Multi-trajectory rollout collection script - Generates 8 solutions per question and computes Regime W rewards per trajectory
+- ✅ Phase 3.5: Preference pair builder - Converts rollouts to better/worse trajectory pairs
+- ✅ Phase 4: DPO training script - Uses TRL DPOTrainer with offline Regime W preference pairs
+- ✅ Phase 5: Final evaluation script - Compares Base vs SFT vs DPO RL on GSM8K test set
 - ✅ Dev evaluation script - Quick validation on 50 dev examples for Base vs SFT comparison
 
 **Ready for Execution:**
 All code is implemented and ready to run on Lambda GPU. The complete training pipeline can now be executed:
 1. Run `python -m src.regime_w.demo` to verify Regime W module
-2. Run `python -m src.rl_training.collect_rollouts` to generate rollouts (Phase 3)
-3. Run `python -m src.rl_training.train_ppo` to perform PPO training (Phase 4)
-4. Run `python -m src.eval.eval_platinum` to evaluate all models (Phase 5)
+2. Run `python -m src.rl_training.collect_rollouts` to generate multi-trajectory rollouts (Phase 3)
+3. Run `python -m src.rl_training.build_preferences` to create preference pairs from rollouts
+4. Run `python -m src.rl_training.train_dpo` to perform DPO training (Phase 4)
+5. Run `python -m src.eval.eval_platinum` to evaluate all models (Phase 5)
 
 ## User Preferences
 
@@ -70,47 +72,72 @@ Preferred communication style: Simple, everyday language.
   - `s_cf`: Counterfactual robustness (placeholder for future CHSH logic)
   - `s_wm`: Combined coherence score (0.4*s_end + 0.3*s_path + 0.3*s_cf)
 - **Reward Function** (`reward.py`):
-  - Base: +1.0 if any arm correct, -0.5 otherwise
-  - Coherence bonus: +0.7 * s_wm
-  - Length penalty: -0.001 * max(0, avg_length - 400)
+  - Trajectory dataclass: text, reasoning, answer, num_tokens
+  - Hyperparameters: ALPHA_CORRECT=1.0, BETA_COHERENCE=0.5, LENGTH_PENALTY_PER_TOKEN=0.001, threshold=512
+  - Per-trajectory reward formula:
+    - Base: ALPHA_CORRECT * correctness (1.0 if correct, 0.0 otherwise)
+    - Coherence term: BETA_COHERENCE * s_wm (question-level coherence score)
+    - Length penalty: -0.001 * max(0, num_tokens - 512)
+    - Agreement bonus: +0.2 if correct and all correct trajectories agree (s_end > 0.9)
+  - Returns list of rewards (one per trajectory) for preference pair creation
 - **Demo**: `demo.py` provides sanity test with sample questions
-- **Output**: Combined coherence + correctness reward signal for PPO training
+- **Output**: Per-trajectory rewards combining correctness + coherence for preference-based RL
 
-**Phase 3 - Rollout Collection**
+**Phase 3 - Multi-Trajectory Rollout Collection**
 - **Implementation**: `src/rl_training/collect_rollouts.py`
-- **Process**: Loads SFT LoRA model, generates 8 solutions (one per arm) for each training question
-- **Scoring**: Each question's 8-arm output set scored together via Regime W reward function
+- **Model Loading**: Loads base model in 8-bit + SFT LoRA adapter using PEFT pattern
+- **Process**: Generates 8 trajectories (one per arm) for each training question
+- **Trajectory Sampling**: Each arm uses different system prompt and temperature settings
+- **Scoring**: Computes per-trajectory Regime W rewards via `compute_rewards_for_question`
+- **Answer Extraction Fix**: Slices response_ids from generation to exclude prompt before extraction
 - **Data Format**: JSONL file `data/regime_w_rollouts.jsonl` with fields:
   - `question`: Training question text
   - `gold_answer`: Ground truth answer
-  - `arm_outputs`: Array of 8 solution attempts (one per arm) with full_text, reasoning, answer
-  - `reward`: Single Regime W reward score for that question's arm set
+  - `trajectories`: Array of 8 trajectories, each with text, reasoning, answer, num_tokens, reward
 - **Default**: Processes first 500 training examples (configurable)
-- **Purpose**: Create offline rollout dataset with coherence-aware rewards for PPO training
+- **Purpose**: Create trajectory dataset with per-sample coherence-aware rewards for preference pair creation
 
-**Phase 4 - PPO Reinforcement Learning**
-- **Implementation**: `src/rl_training/train_ppo.py`
-- **Framework**: TRL's PPOTrainer with offline rollout training
-- **Input**: Loads pre-computed Regime W rollouts from `data/regime_w_rollouts.jsonl`
-- **Strategy**: For each batch, randomly selects one arm's response per question as training sample
-- **Reward**: Uses pre-computed Regime W reward (correctness + coherence) for that question
+**Phase 3.5 - Preference Pair Construction**
+- **Implementation**: `src/rl_training/build_preferences.py`
+- **Input**: Loads rollouts from `data/regime_w_rollouts.jsonl`
+- **Selection Strategy**: For each question, selects highest reward vs lowest reward trajectory
+- **Output Format**: JSONL file `data/preferences.jsonl` with fields:
+  - `question`: Training question
+  - `gold_answer`: Ground truth
+  - `chosen`: Higher-reward trajectory text
+  - `rejected`: Lower-reward trajectory text
+  - `chosen_reward`, `rejected_reward`: For debugging/analysis
+- **Purpose**: Convert rollout rewards into preference pairs for DPO training
+
+**Phase 4 - DPO Reinforcement Learning**
+- **Implementation**: `src/rl_training/train_dpo.py`
+- **Framework**: TRL's DPOTrainer for preference-based optimization
+- **Model Loading**:
+  - Policy model: Base (8-bit) + SFT LoRA adapter (with gradient checkpointing)
+  - Reference model: Separate frozen copy of base (8-bit) + SFT LoRA adapter
+- **Input**: Preference pairs from `data/preferences.jsonl`
+- **Dataset Format**: Maps to (prompt, chosen, rejected) tuples for DPO
+- **Prompt Format**: Same tutoring-style prompt used in SFT
 - **Configuration**:
   - Learning rate: 5e-6
-  - Batch size: 8, mini-batch: 4
-  - Target KL: 0.1 with adaptive KL control
-  - Max grad norm: 1.0
-- **Optimization**: Policy gradient updates on LoRA parameters to maximize coherent reasoning
-- **Output**: PPO-optimized LoRA checkpoint in `checkpoints/ppo_regime_w/`
+  - Batch size: 1 with 8 gradient accumulation steps
+  - Training epochs: 1
+  - Beta: 0.1 (KL regularization strength)
+  - BF16 precision for efficiency
+- **Optimization**: Updates only LoRA parameters to prefer high-coherence trajectories
+- **Output**: DPO-optimized LoRA checkpoint in `checkpoints/lora_rl/`
 
 **Phase 5 - Evaluation**
 - **Implementation**: 
   - `src/eval/eval_gsm8k_dev.py`: Quick dev validation (50 examples, Base vs SFT)
-  - `src/eval/eval_platinum.py`: Full test evaluation (Base vs SFT vs PPO)
+  - `src/eval/eval_platinum.py`: Full test evaluation (Base vs SFT vs DPO RL)
 - **Test Set**: GSM8K test split (reserved, never seen during training)
 - **Models Compared**:
   - Base: `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` (vanilla)
   - SFT: LoRA checkpoint from `checkpoints/sft_lora/`
-  - PPO: Regime W optimized checkpoint from `checkpoints/ppo_regime_w/`
+  - DPO RL: Regime W optimized checkpoint from `checkpoints/lora_rl/`
+- **Model Loading**: Uses base model (8-bit) + LoRA adapter pattern for SFT and RL models
+- **Answer Extraction Fix**: Slices response from generation before extraction to avoid extracting numbers from prompt
 - **Metrics**: Accuracy on mathematical reasoning tasks with robust answer extraction
 - **Answer Extraction**: Regex-based, prefers `####` marker, falls back to last number in text
 
@@ -123,23 +150,24 @@ Preferred communication style: Simple, everyday language.
 ### Model Checkpointing
 - **Location**: `checkpoints/` directory with subdirectories per training phase
 - **SFT Checkpoints**: LoRA adapters saved in `checkpoints/sft_lora/`
-- **PPO Checkpoints**: Saved in `checkpoints/ppo/`
+- **DPO RL Checkpoints**: LoRA adapters saved in `checkpoints/lora_rl/`
 - **Strategy**: Incremental saves during training for recovery and comparison
-- **Note**: SFT produces LoRA adapter weights that can be merged with base model or loaded separately for inference
+- **Loading Pattern**: Base model (8-bit) + LoRA adapter using PEFT's `PeftModel.from_pretrained()`
+- **Note**: All checkpoints are LoRA adapter weights that must be loaded with base model for inference
 
 ### Module Organization
-- **baseline_sft/**: Data preparation and supervised fine-tuning scripts
-- **regime_w/**: Private coherence evaluation engine (multi-armed bandit implementation)
-- **rl_training/**: Rollout generation and PPO training orchestration
-- **eval/**: Model evaluation and comparison utilities
+- **baseline_sft/**: Data preparation and supervised fine-tuning scripts with QLoRA
+- **regime_w/**: Private coherence evaluation engine (8-armed bandit, scoring metrics, reward computation)
+- **rl_training/**: Multi-trajectory rollout generation, preference pair construction, and DPO training
+- **eval/**: Model evaluation and comparison utilities with answer extraction fixes
 
 ## External Dependencies
 
 ### Machine Learning Frameworks
 - **transformers**: Hugging Face library for model loading, tokenization, and inference
 - **datasets**: Hugging Face library for GSM8K dataset access and preprocessing
-- **trl**: Transformer Reinforcement Learning library (SFTTrainer, PPOTrainer)
-- **peft**: Parameter-efficient fine-tuning library for LoRA adapter training
+- **trl**: Transformer Reinforcement Learning library (SFTTrainer, DPOTrainer)
+- **peft**: Parameter-efficient fine-tuning library for LoRA adapter training and loading
 - **accelerate**: Distributed training and mixed-precision support
 - **bitsandbytes**: 4-bit/8-bit quantization for memory-efficient training
 

@@ -1,20 +1,49 @@
 from typing import List, Dict
+import re
+
+
+def extract_answer(text: str) -> str:
+    """
+    Prefer the number after '####'; otherwise last number in text.
+    """
+    marker = "####"
+    if marker in text:
+        tail = text.split(marker)[-1]
+        m = re.search(r"-?\d+\.?\d*", tail)
+        if m:
+            return m.group(0).strip()
+
+    nums = re.findall(r"-?\d+\.?\d*", text)
+    if nums:
+        return nums[-1].strip()
+
+    return text.strip()
+
+
+def normalize_answer(ans: str) -> str:
+    """
+    Simple normalization for answer comparison.
+    """
+    return ans.strip().lower()
 
 
 def s_end_for_question(answers: List[str]) -> float:
     """
     Pairwise agreement on final answers across arms.
+    Normalizes answers before comparison to handle formatting variations.
     """
     n = len(answers)
     if n < 2:
         return 1.0 if n == 1 else 0.0
 
+    normalized = [normalize_answer(extract_answer(a)) for a in answers]
+    
     agree = 0
     total = 0
     for i in range(n):
         for j in range(i + 1, n):
             total += 1
-            if answers[i] == answers[j]:
+            if normalized[i] == normalized[j]:
                 agree += 1
     return agree / total if total > 0 else 0.0
 

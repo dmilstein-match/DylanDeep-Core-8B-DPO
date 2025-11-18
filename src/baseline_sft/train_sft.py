@@ -55,13 +55,22 @@ def main():
         device_map="auto",
     )
 
-    # LoRA config – small and safe for 8B on 40GB
+    # LoRA config – r=64 for expressivity, targeting all projection layers
     peft_config = LoraConfig(
-        r=32,
+        r=64,
         lora_alpha=16,
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",
+        target_modules=[
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ],
     )
 
     # SFT training config – tiny batch, 8-bit optimizer
