@@ -131,15 +131,24 @@ Preferred communication style: Simple, everyday language.
 - **Implementation**: 
   - `src/eval/eval_gsm8k_dev.py`: Quick dev validation (50 examples, Base vs SFT)
   - `src/eval/eval_platinum.py`: Full test evaluation (Base vs SFT vs DPO RL)
+  - `src/eval/eval_rl_platinum.py`: Production-grade RL evaluation on GSM8K Platinum with resume support
+  - `src/eval/eval_with_logging.py`: Saves predictions to JSONL for manual inspection
 - **Test Set**: GSM8K test split (reserved, never seen during training)
+- **GSM8K Platinum Benchmark**: Official cleaned test set (`madrylab/gsm8k-platinum`, 1,210 examples)
 - **Models Compared**:
   - Base: `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` (vanilla)
   - SFT: LoRA checkpoint from `checkpoints/sft_lora/`
   - DPO RL: Regime W optimized checkpoint from `checkpoints/lora_rl/`
 - **Model Loading**: Uses base model (8-bit) + LoRA adapter pattern for SFT and RL models
-- **Answer Extraction Fix**: Slices response from generation before extraction to avoid extracting numbers from prompt
-- **Metrics**: Accuracy on mathematical reasoning tasks with robust answer extraction
 - **Answer Extraction**: Regex-based, prefers `####` marker, falls back to last number in text
+- **Answer Normalization**: Critical for accuracy - handles "42.0" → "42", removes commas, strips whitespace
+- **Production Features** (`eval_rl_platinum.py`):
+  - Per-example JSONL logging to `outputs/rl_platinum_eval.jsonl` with all predictions and metadata
+  - Automatic resume support: reads existing results, skips completed examples, continues from last index
+  - Robust corruption handling: gracefully handles truncated JSON lines from crashes, automatically repairs file
+  - Progress tracking: shows running accuracy every 50 examples
+  - Periodic flushing: saves progress every 10 examples to prevent data loss on GPU timeout/disconnect
+  - Analysis-ready output: each record includes question, gold answer (raw/extracted/normalized), model output, prediction (raw/extracted/normalized), correctness flag
 
 ### Data Management
 - **Storage Location**: `data/` directory (populated on Lambda during training)
