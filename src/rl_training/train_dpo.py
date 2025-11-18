@@ -33,6 +33,7 @@ def main():
 
     print("Loading LoRA SFT adapter as policy model from", SFT_PATH)
     policy_model = PeftModel.from_pretrained(base_model, SFT_PATH)
+    policy_model.tokenizer = tokenizer
 
     print("Loading separate reference model (frozen SFT)")
     ref_base = AutoModelForCausalLM.from_pretrained(
@@ -42,6 +43,7 @@ def main():
     )
     ref_model = PeftModel.from_pretrained(ref_base, SFT_PATH)
     ref_model.eval()
+    ref_model.tokenizer = tokenizer
     for param in ref_model.parameters():
         param.requires_grad = False
 
@@ -81,7 +83,6 @@ def main():
         ref_model=ref_model,
         args=dpo_config,
         train_dataset=dataset,
-        tokenizer=tokenizer,
         beta=0.1,
     )
 
