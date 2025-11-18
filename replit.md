@@ -131,6 +131,7 @@ Preferred communication style: Simple, everyday language.
 - **Implementation**: 
   - `src/eval/eval_gsm8k_dev.py`: Quick dev validation (50 examples, Base vs SFT)
   - `src/eval/eval_platinum.py`: Full test evaluation (Base vs SFT vs DPO RL)
+  - `src/eval/eval_sft_platinum.py`: Production-grade SFT evaluation on GSM8K Platinum with resume support
   - `src/eval/eval_rl_platinum.py`: Production-grade RL evaluation on GSM8K Platinum with resume support
   - `src/eval/eval_with_logging.py`: Saves predictions to JSONL for manual inspection
 - **Test Set**: GSM8K test split (reserved, never seen during training)
@@ -142,8 +143,8 @@ Preferred communication style: Simple, everyday language.
 - **Model Loading**: Uses base model (8-bit) + LoRA adapter pattern for SFT and RL models
 - **Answer Extraction**: Regex-based, prefers `####` marker, falls back to last number in text
 - **Answer Normalization**: Critical for accuracy - handles "42.0" → "42", removes commas, strips whitespace
-- **Production Features** (`eval_rl_platinum.py`):
-  - Per-example JSONL logging to `outputs/rl_platinum_eval.jsonl` with all predictions and metadata
+- **Production Features** (both `eval_sft_platinum.py` and `eval_rl_platinum.py`):
+  - Per-example JSONL logging to `outputs/{sft,rl}_platinum_eval.jsonl` with all predictions and metadata
   - Automatic resume support: reads existing results, skips completed examples, continues from last index
   - Robust corruption handling: gracefully handles truncated JSON lines from crashes, automatically repairs file
   - Progress tracking: shows running accuracy every 50 examples
