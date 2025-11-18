@@ -4,6 +4,23 @@
 
 Private research project for fine-tuning DeepSeek-R1-Distill-Llama-8B on mathematical reasoning tasks using GSM8K dataset. The system implements a three-phase training pipeline: baseline supervised fine-tuning (SFT), proprietary multi-armed bandit coherence evaluation (Regime W), and reinforcement learning optimization via PPO. The goal is to create a high-performance, privately-hosted math reasoning model with enhanced coherence scoring.
 
+## Current Status (November 18, 2025)
+
+**Completed:**
+- ✅ Phase 1: SFT with QLoRA - Successfully trained on Lambda GPU, LoRA adapters saved to `checkpoints/sft_lora/`
+- ✅ Phase 2: Regime W Coherence Module - Fully implemented with 8-arm bandit, scoring metrics (s_end, s_path, s_cf, s_wm), and reward computation
+- ✅ Phase 3: Multi-arm rollout collection script - Generates 8 solutions per question and computes Regime W rewards
+- ✅ Phase 4: PPO training script - Uses TRL PPOTrainer with offline Regime W rollouts
+- ✅ Phase 5: Final evaluation script - Compares Base vs SFT vs PPO on GSM8K test set
+- ✅ Dev evaluation script - Quick validation on 50 dev examples for Base vs SFT comparison
+
+**Ready for Execution:**
+All code is implemented and ready to run on Lambda GPU. The complete training pipeline can now be executed:
+1. Run `python -m src.regime_w.demo` to verify Regime W module
+2. Run `python -m src.rl_training.collect_rollouts` to generate rollouts (Phase 3)
+3. Run `python -m src.rl_training.train_ppo` to perform PPO training (Phase 4)
+4. Run `python -m src.eval.eval_platinum` to evaluate all models (Phase 5)
+
 ## User Preferences
 
 Preferred communication style: Simple, everyday language.
@@ -42,31 +59,60 @@ Preferred communication style: Simple, everyday language.
 - Output: LoRA adapter checkpoint in `checkpoints/sft_lora/` (can be merged with base model later if needed)
 
 **Phase 2 - Regime W Coherence Module (Proprietary)**
-- Architecture: Multi-armed bandit with 8 arms testing different reasoning strategies
-- Arms: 4 Wolfram-style computational variants + 4 Maudlin-style counterfactual variants
-- Scoring Metrics:
-  - `s_end`: End-state correctness evaluation
-  - `s_path`: Path consistency through reasoning steps
-  - `s_cf`: Counterfactual robustness scoring
-  - `s_wm`: Wolfram/Maudlin strategy effectiveness
-- Output: Combined coherence + correctness reward signal
+- **Implementation**: Fully implemented in `src/regime_w/`
+- **Architecture**: Multi-armed bandit with 8 arms testing different reasoning strategies
+- **Arms** (`arms.py`):
+  - 4 Wolfram-style arms (precise, linear reasoning) with temps 0.2, 0.3, 0.4, 0.5
+  - 4 Maudlin-style arms (reflective reasoning) with temps 0.2, 0.3, 0.4, 0.5
+- **Scoring Metrics** (`scoring.py`):
+  - `s_end`: Pairwise agreement on final answers across arms
+  - `s_path`: Path consistency measured by reasoning length variance
+  - `s_cf`: Counterfactual robustness (placeholder for future CHSH logic)
+  - `s_wm`: Combined coherence score (0.4*s_end + 0.3*s_path + 0.3*s_cf)
+- **Reward Function** (`reward.py`):
+  - Base: +1.0 if any arm correct, -0.5 otherwise
+  - Coherence bonus: +0.7 * s_wm
+  - Length penalty: -0.001 * max(0, avg_length - 400)
+- **Demo**: `demo.py` provides sanity test with sample questions
+- **Output**: Combined coherence + correctness reward signal for PPO training
 
 **Phase 3 - Rollout Collection**
-- Process: Generate multiple solution trajectories per training question
-- Reward Assignment: Each trajectory scored via Regime W metrics
-- Data Format: Question-trajectory-reward tuples for PPO training
-- Purpose: Create preference dataset combining correctness with coherence signals
+- **Implementation**: `src/rl_training/collect_rollouts.py`
+- **Process**: Loads SFT LoRA model, generates 8 solutions (one per arm) for each training question
+- **Scoring**: Each question's 8-arm output set scored together via Regime W reward function
+- **Data Format**: JSONL file `data/regime_w_rollouts.jsonl` with fields:
+  - `question`: Training question text
+  - `gold_answer`: Ground truth answer
+  - `arm_outputs`: Array of 8 solution attempts (one per arm) with full_text, reasoning, answer
+  - `reward`: Single Regime W reward score for that question's arm set
+- **Default**: Processes first 500 training examples (configurable)
+- **Purpose**: Create offline rollout dataset with coherence-aware rewards for PPO training
 
 **Phase 4 - PPO Reinforcement Learning**
-- Framework: TRL's PPOTrainer
-- Reward Function: Regime W combined scores (correctness + coherence)
-- Optimization: Policy gradient updates to maximize coherent reasoning
-- Output: Final PPO-optimized checkpoint in `checkpoints/ppo/`
+- **Implementation**: `src/rl_training/train_ppo.py`
+- **Framework**: TRL's PPOTrainer with offline rollout training
+- **Input**: Loads pre-computed Regime W rollouts from `data/regime_w_rollouts.jsonl`
+- **Strategy**: For each batch, randomly selects one arm's response per question as training sample
+- **Reward**: Uses pre-computed Regime W reward (correctness + coherence) for that question
+- **Configuration**:
+  - Learning rate: 5e-6
+  - Batch size: 8, mini-batch: 4
+  - Target KL: 0.1 with adaptive KL control
+  - Max grad norm: 1.0
+- **Optimization**: Policy gradient updates on LoRA parameters to maximize coherent reasoning
+- **Output**: PPO-optimized LoRA checkpoint in `checkpoints/ppo_regime_w/`
 
 **Phase 5 - Evaluation**
-- Test Set: GSM8K test split (reserved, never seen during training)
-- Comparison: Base model vs SFT checkpoint vs PPO checkpoint
-- Metrics: Accuracy and coherence scores across model variants
+- **Implementation**: 
+  - `src/eval/eval_gsm8k_dev.py`: Quick dev validation (50 examples, Base vs SFT)
+  - `src/eval/eval_platinum.py`: Full test evaluation (Base vs SFT vs PPO)
+- **Test Set**: GSM8K test split (reserved, never seen during training)
+- **Models Compared**:
+  - Base: `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` (vanilla)
+  - SFT: LoRA checkpoint from `checkpoints/sft_lora/`
+  - PPO: Regime W optimized checkpoint from `checkpoints/ppo_regime_w/`
+- **Metrics**: Accuracy on mathematical reasoning tasks with robust answer extraction
+- **Answer Extraction**: Regex-based, prefers `####` marker, falls back to last number in text
 
 ### Data Management
 - **Storage Location**: `data/` directory (populated on Lambda during training)
