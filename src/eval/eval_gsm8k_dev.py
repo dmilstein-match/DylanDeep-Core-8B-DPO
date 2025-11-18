@@ -1,4 +1,5 @@
 import json
+import re
 from typing import List, Dict
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -16,9 +17,23 @@ def load_dev(path: str) -> List[Dict]:
 
 
 def extract_answer(text: str) -> str:
+    """
+    Extract the final numeric answer from the model's output.
+    - Prefer the number after '####' if present.
+    - Otherwise, take the last integer/decimal in the text.
+    Returns it as a plain string (e.g., '42' or '3.5').
+    """
     marker = "####"
     if marker in text:
-        return text.split(marker)[-1].strip().split()[0].strip()
+        tail = text.split(marker)[-1]
+        m = re.search(r"-?\d+\.?\d*", tail)
+        if m:
+            return m.group(0).strip()
+    
+    nums = re.findall(r"-?\d+\.?\d*", text)
+    if nums:
+        return nums[-1].strip()
+    
     return text.strip()
 
 
@@ -39,7 +54,7 @@ def eval_base_model():
     model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto")
 
     dev = load_dev(DEV_PATH)
-    dev = dev[:200]  # small subset for speed
+    dev = dev[:50]  # small subset for speed
 
     correct = 0
 
@@ -62,7 +77,7 @@ def eval_base_model():
         if pred == gold_num:
             correct += 1
         
-        if (i + 1) % 50 == 0:
+        if (i + 1) % 10 == 0:
             print(f"  Progress: {i+1}/{len(dev)}")
 
     acc = correct / len(dev)
@@ -82,7 +97,7 @@ def eval_lora_sft_model():
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 
     dev = load_dev(DEV_PATH)
-    dev = dev[:200]  # same subset for fair comparison
+    dev = dev[:50]  # same subset for fair comparison
 
     correct = 0
 
@@ -105,7 +120,7 @@ def eval_lora_sft_model():
         if pred == gold_num:
             correct += 1
         
-        if (i + 1) % 50 == 0:
+        if (i + 1) % 10 == 0:
             print(f"  Progress: {i+1}/{len(dev)}")
 
     acc = correct / len(dev)
