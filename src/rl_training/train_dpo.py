@@ -83,7 +83,6 @@ def main():
         ref_model=ref_model,
         args=dpo_config,
         train_dataset=dataset,
-        beta=0.1,
     )
 
     print("Starting DPO training...")
