@@ -1,0 +1,85 @@
+oading huggingface_hub-0.36.0-py3-none-any.whl (566 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 566.1/566.1 KB 86.7 MB/s eta 0:00:00
+Requirement already satisfied: numpy>=1.17 in /usr/lib/python3/dist-packages (from transformers) (1.21.5)
+Requirement already satisfied: pyyaml>=5.1 in /usr/lib/python3/dist-packages (from transformers) (5.4.1)
+Collecting tokenizers<=0.23.0,>=0.22.0
+  Downloading tokenizers-0.22.1-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (3.3 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.3/3.3 MB 91.6 MB/s eta 0:00:00
+Collecting safetensors>=0.4.3
+  Downloading safetensors-0.6.2-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (485 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 485.8/485.8 KB 91.1 MB/s eta 0:00:00
+Requirement already satisfied: requests in /usr/lib/python3/dist-packages (from transformers) (2.25.1)
+Requirement already satisfied: packaging>=20.0 in /usr/lib/python3/dist-packages (from transformers) (21.3)
+Collecting tqdm>=4.27
+  Downloading tqdm-4.67.1-py3-none-any.whl (78 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 78.5/78.5 KB 21.0 MB/s eta 0:00:00
+Collecting regex!=2019.12.17
+  Downloading regex-2025.11.3-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (791 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 791.7/791.7 KB 80.8 MB/s eta 0:00:00
+Collecting pyarrow>=21.0.0
+  Downloading pyarrow-22.0.0-cp310-cp310-manylinux_2_28_x86_64.whl (47.6 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 47.6/47.6 MB 62.9 MB/s eta 0:00:00
+Collecting requests
+  Downloading requests-2.32.5-py3-none-any.whl (64 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 64.7/64.7 KB 14.8 MB/s eta 0:00:00
+Collecting dill<0.4.1,>=0.3.0
+  Downloading dill-0.4.0-py3-none-any.whl (119 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 119.7/119.7 KB 27.2 MB/s eta 0:00:00
+Collecting xxhash
+  Downloading xxhash-3.6.0-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (193 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 193.2/193.2 KB 48.2 MB/s eta 0:00:00
+Collecting multiprocess<0.70.19
+  Downloading multiprocess-0.70.18-py310-none-any.whl (134 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 134.9/134.9 KB 31.2 MB/s eta 0:00:00
+Requirement already satisfied: fsspec[http]<=2025.10.0,>=2023.1.0 in /usr/lib/python3/dist-packages (from datasets) (2024.3.1)
+Requirement already satisfied: pandas in /usr/lib/python3/dist-packages (from datasets) (1.3.5)
+Collecting httpx<1.0.0
+  Downloading httpx-0.28.1-py3-none-any.whl (73 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 73.5/73.5 KB 17.2 MB/s eta 0:00:00
+Requirement already satisfied: psutil in /usr/lib/python3/dist-packages (from peft) (5.9.0)
+Collecting aiohttp!=4.0.0a0,!=4.0.0a1
+  Downloading aiohttp-3.13.2-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (1.7 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.7/1.7 MB 152.4 MB/s eta 0:00:00
+Requirement already satisfied: certifi in /usr/lib/python3/dist-packages (from httpx<1.0.0->datasets) (2020.6.20)
+Requirement already satisfied: idna in /usr/lib/python3/dist-packages (from httpx<1.0.0->datasets) (3.3)
+Collecting anyio
+  Downloading anyio-4.11.0-py3-none-any.whl (109 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 109.1/109.1 KB 26.1 MB/s eta 0:00:00
+Collecting httpcore==1.*
+  Downloading httpcore-1.0.9-py3-none-any.whl (78 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 78.8/78.8 KB 18.2 MB/s eta 0:00:00
+Collecting h11>=0.16
+  Downloading h11-0.16.0-py3-none-any.whl (37 kB)
+Requirement already satisfied: typing-extensions>=3.7.4.3 in /usr/lib/python3/dist-packages (from huggingface-hub<1.0,>=0.34.0->transformers) (4.10.0)
+Collecting hf-xet<2.0.0,>=1.1.3
+  Downloading hf_xet-1.2.0-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (3.3 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.3/3.3 MB 178.6 MB/s eta 0:00:00
+Requirement already satisfied: urllib3<3,>=1.21.1 in /usr/lib/python3/dist-packages (from requests->transformers) (1.26.5)
+Collecting charset_normalizer<4,>=2
+  Downloading charset_normalizer-3.4.4-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (153 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 153.6/153.6 KB 38.3 MB/s eta 0:00:00
+Collecting propcache>=0.2.0
+  Downloading propcache-0.4.1-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (196 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 196.9/196.9 KB 42.1 MB/s eta 0:00:00
+Collecting multidict<7.0,>=4.5
+  Downloading multidict-6.7.0-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (241 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 241.7/241.7 KB 52.4 MB/s eta 0:00:00
+Collecting frozenlist>=1.1.1
+  Downloading frozenlist-1.8.0-cp310-cp310-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl (219 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 219.5/219.5 KB 52.5 MB/s eta 0:00:00
+Collecting aiohappyeyeballs>=2.5.0
+  Downloading aiohappyeyeballs-2.6.1-py3-none-any.whl (15 kB)
+Collecting yarl<2.0,>=1.17.0
+  Downloading yarl-1.22.0-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (346 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 347.0/347.0 KB 58.3 MB/s eta 0:00:00
+Collecting aiosignal>=1.4.0
+  Downloading aiosignal-1.4.0-py3-none-any.whl (7.5 kB)
+Requirement already satisfied: attrs>=17.3.0 in /usr/lib/python3/dist-packages (from aiohttp!=4.0.0a0,!=4.0.0a1->fsspec[http]<=2025.10.0,>=2023.1.0->datasets) (21.2.0)
+Collecting async-timeout<6.0,>=4.0
+  Downloading async_timeout-5.0.1-py3-none-any.whl (6.2 kB)
+Collecting sniffio>=1.1
+  Downloading sniffio-1.3.1-py3-none-any.whl (10 kB)
+Collecting exceptiongroup>=1.0.2
+  Downloading exceptiongroup-1.3.0-py3-none-any.whl (16 kB)
+Installing collected packages: xxhash, tqdm, sniffio, sentencepiece, safetensors, regex, pyarrow, propcache, multidict, hf-xet, h11, frozenlist, exceptiongroup, dill, charset_normalizer, async-timeout, aiohappyeyeballs, yarl, requests, multiprocess, httpcore, anyio, aiosignal, huggingface-hub, httpx, aiohttp, tokenizers, accelerate, transformers, datasets, trl, peft
+Successfully in

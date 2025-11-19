@@ -1,0 +1,268 @@
+ser/looper-math-platinum-8b/src/common/answer_utils.py
+Read 81 lines
+Now I can see the critical bugs affecting correctness! Let me fix them:
+
+Critical Issues Found:
+CORRECTNESS BUG: scoring.py has its own normalize_answer() that's less sophisticated than answer_utils.py:
+
+scoring.py: Only does .strip().lower()
+answer_utils.py: Also removes commas and converts 42.0→42
+Impact: s_end scores may fail to match answers like "42.0" vs "42", reducing coherence rewards for correct answers
+Wasted signal: s_cf always returns 0.5, contributing a constant 0.15 to all rewards (30% × 0.5)
+
+Let me fix these:
+
+Edit
+/home/user/looper-math-platinum-8b/src/regime_w/scoring.py
+from typing import List, Dict
+
+import re
+
+ 
+
+ 
+
+def extract_answer(text: str) -> str:
+
+    """
+
+    Prefer the number after '####'; otherwise last number in text.
+
+    """
+
+    marker = "####"
+
+    if marker in text:
+
+        tail = text.split(marker)[-1]
+
+        m = re.search(r"-?\d+\.?\d*", tail)
+
+        if m:
+
+            return m.group(0).strip()
+
+ 
+
+    nums = re.findall(r"-?\d+\.?\d*", text)
+
+    if nums:
+
+        return nums[-1].strip()
+
+ 
+
+    return text.strip()
+
+Show full diff (10 more lines)
+Update Todos
+ Analyze the placeholder s_cf function and its impact on rewards
+ Fix duplicate answer extraction code causing potential inconsistencies
+ Rebalancing coherence weights to remove wasted s_cf signal
+ Fix inconsistent answer storage in vLLM rollout script
+ Test the fixes to ensure correctness is maintained
+ Commit and push the optimizations
+Now let me fix the wasted s_cf signal by rebalancing weights:
+
+Edit
+/home/user/looper-math-platinum-8b/src/regime_w/scoring.py
+def s_cf_for_question(arm_outputs: List[Dict]) -> float:
+
+    """
+
+    Placeholder counterfactual/cross-check score.
+
+    You can later plug in your real CHSH-ish logic here.
+
+    """
+
+    return 0.5
+
+ 
+
+ 
+
+def s_wm_for_question(s_end: float, s_path: float, s_cf: float) -> float:
+
+    """
+
+    Combined Regime W coherence score.
+
+    """
+
+    return 0.4 * s_end + 0.3 * s_path + 0.3 * s_cf
+
+    Counterfactual/cross-check score (currently disabled).
+
+ 
+
+    Previously returned a constant 0.5, which contributed uniform noise.
+
+    Rebalanced weights in s_wm_for_question to focus on actual signals.
+
+ 
+
+    Future work: Implement CHSH-style consistency checks across reasoning paths.
+
+    """
+
+Show full diff (15 more lines)
+Update Todos
+ Analyze the placeholder s_cf function and its impact on rewards
+ Fix duplicate answer extraction code causing potential inconsistencies
+ Implement real counterfactual scoring or rebalance coherence weights
+ Fixing inconsistent answer storage in vLLM script
+ Test the fixes to ensure correctness is maintained
+ Commit and push the optimizations
+Read
+/home/user/looper-math-platinum-8b/src/rl_training/collect_rollouts_abel_vllm.py
+Read 40 lines
+Good news! The vLLM script already has clear comments explaining the design (lines 140-142). This is intentional and correct. Let me verify the fixes work by running a quick test:
+
+Update Todos
+ Analyze the placeholder s_cf function and its impact on rewards
+ Fix duplicate answer extraction code causing potential inconsistencies
+ Implement real counterfactual scoring or rebalance coherence weights
+ Fix inconsistent answer storage in vLLM rollout script
+ Testing fixes for correctness
+ Commit and push the optimizations
+Write
+/home/user/looper-math-platinum-8b/test_regime_w_fixes.py
+#!/usr/bin/env python3
+
+"""
+
+Quick test to verify Regime W optimizations maintain correctness.
+
+Tests the critical fixes:
+
+1. Consistent answer normalization across scoring.py and answer_utils.py
+
+2. Rebalanced coherence weights (s_end + s_path only, no s_cf waste)
+
+"""
+
+ 
+
+from src.regime_w.reward import compute_rewards_for_question, Trajectory
+
+from src.regime_w.scoring import s_end_for_question, s_wm_for_question
+
+from src.common.answer_utils import extract_answer, normalize_answer
+
+ 
+
+ 
+
+def test_answer_normalization_consistency():
+
+    """Test that scoring.py uses the same normalization as answer_utils.py"""
+
+    print("\n=== Test 1: Answer Normalization Consistency ===")
+
+ 
+
+    test_cases = [
+
+        ("42.0", "42", True),  # Should match after normalization
+
+        ("1,000", "1000", True),  # Commas removed
+
+Show full diff (174 more lines)
+Bash
+python test_regime_w_fixes.py
+
+Trajectory rewards:
+  1. Answer: 42                   (normalized: 42   ) -> Reward: 1.290 ✓
+  2. Answer: 42.0                 (normalized: 42   ) -> Reward: 1.290 ✓
+  3. Answer: 43                   (normalized: 43   ) -> Reward: 0.290 ✗
+✓ Correct answers receive higher rewards!
+
+============================================================
+✗ SOME TESTS FAILED - Please review the output above
+============================================================
+... +31 lines
+Found a bug in answer extraction! The regex doesn't handle commas in numbers like "1,000". Let me fix this:
+
+Edit
+/home/user/looper-math-platinum-8b/src/common/answer_utils.py
+def extract_answer(text: str) -> str:
+
+    """
+
+    Extract the final numeric answer from text.
+
+    
+
+    Strategy:
+
+    1. Prefer the number after '####' marker if present
+
+    2. Otherwise, take the last number in the text
+
+    3. If no numbers found, return the text as-is
+
+    
+
+    Args:
+
+        text: Model output or gold answer string
+
+        
+
+    Returns:
+
+        Extracted answer string (may still need normalization)
+
+    """
+
+    marker = "####"
+
+    if marker in text:
+
+        tail = text.split(marker)[-1]
+
+        m = re.search(r"-?\d+\.?\d*", tail)
+
+        if m:
+
+Show full diff (29 more lines)
+Bash
+python test_regime_w_fixes.py
+============================================================
+✓ ALL TESTS PASSED - Regime W optimizations are correct!
+============================================================
+... +39 lines
+Perfect! All tests pass. Let me update the todo list and commit the changes:
+
+Update Todos
+ Analyze the placeholder s_cf function and its impact on rewards
+ Fix duplicate answer extraction code causing potential inconsistencies
+ Implement real counterfactual scoring or rebalance coherence weights
+ Fix inconsistent answer storage in vLLM rollout script
+ Test the fixes to ensure correctness is maintained
+ Committing and pushing optimizations
+Bash
+git add -A && git status
+	modified:   src/common/answer_utils.py
+	modified:   src/regime_w/scoring.py
+	new file:   test_regime_w_fixes.py
+... +3 lines
+Bash
+git commit -m "$(cat <<'EOF' Optimize Regime W for correctness and efficiency This commit fixes critical bugs and optimizes Regime W without hurting correctness: **Critical Fixes:** 1. **Consolidated answer extraction** (scoring.py): - Removed duplicate extract_answer/normalize_answer functions - Now imports from src.common.answer_utils for consistency - Fixes bug where "42.0" vs "42" wouldn't match in s_end scoring - Ensures all answer comparisons use same normalization logic 2. **Improved comma handling** (answer_utils.py): - Updated regex from `-?\d+\.?\d*` to `-?[\d,]+\.?\d*` - Now correctly extracts "1,000" instead of "1" or "000" - Normalization still removes commas for comparison 3. **Rebalanced coherence weights** (scoring.py): - Changed s_wm from [0.4, 0.3, 0.3] to [0.6, 0.4, 0.0] - Disabled placeholder s_cf (was returning constant 0.5) - Redistributed 30% weight to s_end (60%) and s_path (40%) - Removes uniform 0.15 boost that added noise to all rewards **Impact on Correctness:** - ✓ Fixes normalization inconsistency that could miss correct answer agreements - ✓ Improves answer extraction for comma-formatted numbers - ✓ Maintains correctness-first reward structure (ALPHA_CORRECT = 1.0) - ✓ Coherence now provides clearer signal (no constant noise term) **Testing:** - Added comprehensive test suite (test_regime_w_fixes.py) - All tests pass: normalization, s_end scoring, weights, full rewards - Verified correct answers still receive higher rewards than incorrect EOF )"
+[claude/regime-w-optimization-01UMAYDAeszPfMeDAjG3DyE4 9488571] Optimize Regime W for correctness and efficiency
+ 3 files changed, 219 insertions(+), 35 deletions(-)
+ create mode 100644 test_regime_w_fixes.py
+Bash
+git push -u origin claude/regime-w-optimization-01UMAYDAeszPfMeDAjG3DyE4
+remote: 
+To http://127.0.0.1:45552/git/dmilstein-match/looper-math-platinum-8b
+ * [new branch]      claude/regime-w-optimization-01UMAYDAeszPfMeDAjG3DyE4 -> claude/regime-w-optimization-01UMAYDAeszPfMeDAjG3DyE4
+... +4 lines
+Update Todos
+ Analyze the placeholder s_cf function and its impact on rewards
+ Fix duplicate answer extraction code causing potential inconsistencies
+ Implement real counterfactual scoring or rebalance coherence weights
+ Fix inconsistent answer storage in vLLM rollout script
+ Test the fixes to ensure correctness is maintained
+ Commit and push the optimizations

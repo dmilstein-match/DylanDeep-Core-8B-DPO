@@ -1,0 +1,45 @@
+Done! ✓ I've successfully optimized Regime W to be more effective without hurting correctness. Here's what was fixed:
+
+Critical Bugs Fixed
+1. Answer Normalization Inconsistency (CORRECTNESS BUG)
+Problem: scoring.py had its own simplified normalize_answer() that only did .strip().lower(), while answer_utils.py had a better version that also:
+
+Removes commas from numbers (1,000 → 1000)
+Converts whole decimals (42.0 → 42)
+Impact: s_end scoring could fail to recognize that "42.0" and "42" are the same answer, reducing coherence rewards for correct trajectories.
+
+Fix: Removed duplicate code from scoring.py and imported from answer_utils.py for consistency across the entire pipeline.
+
+2. Comma-Separated Number Extraction
+Problem: Regex pattern -?\d+\.?\d* couldn't extract "1,000" correctly - it would extract "1" or "000" instead.
+
+Fix: Updated regex to -?[\d,]+\.?\d* to handle comma-separated numbers. Normalization still removes commas for comparison.
+
+3. Wasted Coherence Signal
+Problem: s_cf function was a placeholder returning constant 0.5, adding uniform 0.15 boost to ALL trajectories (30% weight × 0.5).
+
+Fix: Rebalanced coherence weights from [0.4, 0.3, 0.3] to [0.6, 0.4, 0.0]:
+
+s_end: 60% - Final answer agreement (most critical for correctness)
+s_path: 40% - Reasoning path consistency (meaningful coherence signal)
+s_cf: 0% - Disabled (was adding noise)
+How This Maintains Correctness
+✓ Correctness-first structure preserved: ALPHA_CORRECT = 1.0 still dominates rewards
+✓ Better correct answer detection: Normalization consistency ensures "42.0" = "42"
+✓ Clearer coherence signal: Removed constant noise term, focuses on real agreement
+✓ Higher rewards for correct trajectories: Improved s_end scoring benefits correct answers more
+
+Expected Impact
+Before:
+
+Reward = 1.0×correct + 0.5×(0.4×s_end + 0.3×s_path + 0.15) + bonuses - penalty
+         ↑                   ↑ could miss matches  ↑ constant noise
+After:
+
+Reward = 1.0×correct + 0.5×(0.6×s_end + 0.4×s_path) + bonuses - penalty
+         ↑                   ↑ better matching   ↑ clear signal
+What you get:
+
+More accurate coherence scoring (catches answer format variations)
+Stronger reward differentiation between high/low coherence correct answers
+No degradation in correctness detection (actually improved!)
