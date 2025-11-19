@@ -9,6 +9,12 @@ from datasets import load_dataset
 from trl import SFTTrainer, SFTConfig
 from peft import LoraConfig
 
+# H100 optimization flags
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
+torch.backends.cuda.enable_flash_sdp(True)
+torch.backends.cuda.enable_mem_efficient_sdp(True)
+
 BASE_MODEL = "GAIR/Abel-7B-002"
 TRAIN_PATH = "data/gsm8k_train.jsonl"
 OUTPUT_DIR = "checkpoints/abel_sft_lora"
@@ -87,12 +93,12 @@ def main():
         task_type="CAUSAL_LM",
     )
 
-    # Training configuration
+    # Training configuration (H100-optimized batch sizes)
     sft_config = SFTConfig(
         output_dir=OUTPUT_DIR,
         num_train_epochs=1,
-        per_device_train_batch_size=4,
-        gradient_accumulation_steps=4,
+        per_device_train_batch_size=8,
+        gradient_accumulation_steps=2,
         learning_rate=5e-5,
         bf16=use_bf16,
         fp16=not use_bf16,

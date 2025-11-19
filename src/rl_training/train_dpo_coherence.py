@@ -4,6 +4,11 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel, LoraConfig, get_peft_model
 from trl import DPOTrainer, DPOConfig
 
+# H100 optimization flags
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
+torch.backends.cuda.enable_flash_sdp(True)
+torch.backends.cuda.enable_mem_efficient_sdp(True)
 
 BASE_MODEL = "GAIR/Abel-7B-002"
 SFT_PATH = "checkpoints/abel_sft_lora"
@@ -108,12 +113,12 @@ def main():
     except:
         pass
 
-    # DPO training configuration (Lambda-compatible, uses detected dtype from above)
+    # DPO training configuration (H100-optimized batch sizes)
     dpo_config = DPOConfig(
         output_dir=RL_OUTPUT_DIR,
         num_train_epochs=1,
-        per_device_train_batch_size=4,
-        gradient_accumulation_steps=4,
+        per_device_train_batch_size=16,
+        gradient_accumulation_steps=1,
         learning_rate=5e-6,
         logging_steps=10,
         save_strategy="epoch",

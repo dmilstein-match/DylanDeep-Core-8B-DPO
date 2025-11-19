@@ -1,10 +1,17 @@
 import os
 import json
 from typing import List, Dict
+import torch
 
 from datasets import load_dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import PeftModel
+
+# H100 optimization flags
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
+torch.backends.cuda.enable_flash_sdp(True)
+torch.backends.cuda.enable_mem_efficient_sdp(True)
 
 from src.common.answer_utils import extract_answer, normalize_answer
 
@@ -103,86 +110,112 @@ def eval_abel_sft_on_platinum():
 
     print(f"\nLoading Abel SFT model from {lora_path}")
     tokenizer = AutoTokenizer.from_pretrained(base_model_name)
-    # Optional safety: ensure pad_token exists
+    # Ensure pad_token exists for batched generation
     if tokenizer.pad_token is None and tokenizer.eos_token is not None:
         tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "left"  # For decoder-only models
 
-    import torch
+    # Detect dtype support
+    use_bf16 = torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False
+    dtype = torch.bfloat16 if use_bf16 else torch.float16
+    
     base_model = AutoModelForCausalLM.from_pretrained(
         base_model_name,
         device_map="auto",
-        torch_dtype=torch.bfloat16,
+        torch_dtype=dtype,
     )
     model = PeftModel.from_pretrained(base_model, lora_path)
     model.eval()
 
     # ------------------------------------------------------------------
-    # 4) Main evaluation loop (with resume)
+    # 4) Main evaluation loop (batched, H100-optimized)
     # ------------------------------------------------------------------
     correct = correct_so_far
-
+    BATCH_SIZE = 32  # H100-optimized batch size for fast evaluation
+    
     print(
         f"\nStarting / resuming evaluation at index {start_index} "
-        f"out of {total_examples} total examples.\n"
+        f"out of {total_examples} total examples (batch_size={BATCH_SIZE}).\n"
     )
 
-    for i, ex in enumerate(platinum_test):
-        if i < start_index:
-            continue  # skip examples we've already logged
-
-        q = ex["question"]
-        gold = ex["answer"]
-
-        prompt = build_prompt(q)
-        inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-        input_length = inputs["input_ids"].shape[1]
-
-        gen = model.generate(
-            **inputs,
-            max_new_tokens=256,
-            temperature=0.6,
-            top_p=0.9,
-        )
-        response_ids = gen[0][input_length:]
-        text = tokenizer.decode(response_ids, skip_special_tokens=True)
-
-        # Extract and normalize both answers
-        pred_raw = extract_answer(text)
-        gold_raw = extract_answer(gold)
-
-        pred_norm = normalize_answer(pred_raw)
-        gold_norm = normalize_answer(gold_raw)
-
-        is_correct = (pred_norm == gold_norm) and (pred_norm != "")
-        if is_correct:
-            correct += 1
-
-        # Write per-example record to JSONL
-        record = {
-            "index": i,
-            "question": q,
-            "gold_answer_raw": gold,
-            "gold_answer_extracted": gold_raw,
-            "gold_answer_normalized": gold_norm,
-            "model_output": text,
-            "pred_answer_extracted": pred_raw,
-            "pred_answer_normalized": pred_norm,
-            "correct": bool(is_correct),
-        }
-        out_f.write(json.dumps(record) + "\n")
-
-        # Flush occasionally so progress is not lost if the job dies
-        if (i + 1) % 10 == 0:
-            out_f.flush()
-
-        # Progress logging
-        if (i + 1) % 50 == 0 or (i + 1) == total_examples:
-            current_n = i + 1
-            current_acc = correct / current_n
-            print(
-                f"  Progress: {current_n}/{total_examples}, "
-                f"Current accuracy (over seen examples): {current_acc:.3f}"
+    # Prepare remaining examples
+    remaining_examples = [
+        (i, ex) for i, ex in enumerate(platinum_test) if i >= start_index
+    ]
+    
+    # Process in batches
+    for batch_start in range(0, len(remaining_examples), BATCH_SIZE):
+        batch_end = min(batch_start + BATCH_SIZE, len(remaining_examples))
+        batch = remaining_examples[batch_start:batch_end]
+        
+        # Prepare batch inputs
+        batch_prompts = [build_prompt(ex["question"]) for _, ex in batch]
+        batch_questions = [ex["question"] for _, ex in batch]
+        batch_golds = [ex["answer"] for _, ex in batch]
+        batch_indices = [i for i, _ in batch]
+        
+        # Tokenize batch
+        inputs = tokenizer(
+            batch_prompts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=1024
+        ).to(model.device)
+        input_lengths = inputs["attention_mask"].sum(dim=1)
+        
+        # Generate batch (deterministic for reproducibility)
+        with torch.no_grad():
+            gen = model.generate(
+                **inputs,
+                max_new_tokens=256,
+                do_sample=False,  # Deterministic generation
+                num_beams=1,
+                pad_token_id=tokenizer.pad_token_id,
             )
+        
+        # Decode and process each example in batch
+        for j, (idx, question, gold) in enumerate(zip(batch_indices, batch_questions, batch_golds)):
+            # Extract generated response (skip input tokens)
+            input_len = input_lengths[j].item()
+            response_ids = gen[j][input_len:]
+            text = tokenizer.decode(response_ids, skip_special_tokens=True)
+            
+            # Extract and normalize both answers
+            pred_raw = extract_answer(text)
+            gold_raw = extract_answer(gold)
+            
+            pred_norm = normalize_answer(pred_raw)
+            gold_norm = normalize_answer(gold_raw)
+            
+            is_correct = (pred_norm == gold_norm) and (pred_norm != "")
+            if is_correct:
+                correct += 1
+            
+            # Write per-example record to JSONL
+            record = {
+                "index": idx,
+                "question": question,
+                "gold_answer_raw": gold,
+                "gold_answer_extracted": gold_raw,
+                "gold_answer_normalized": gold_norm,
+                "model_output": text,
+                "pred_answer_extracted": pred_raw,
+                "pred_answer_normalized": pred_norm,
+                "correct": bool(is_correct),
+            }
+            out_f.write(json.dumps(record) + "\n")
+        
+        # Flush after each batch
+        out_f.flush()
+        
+        # Progress logging
+        processed_count = start_index + batch_end
+        current_acc = correct / processed_count
+        print(
+            f"  Progress: {processed_count}/{total_examples}, "
+            f"Current accuracy: {current_acc:.3f}"
+        )
 
     out_f.close()
 

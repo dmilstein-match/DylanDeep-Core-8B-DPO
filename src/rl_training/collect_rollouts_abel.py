@@ -6,6 +6,12 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 
+# H100 optimization flags
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
+torch.backends.cuda.enable_flash_sdp(True)
+torch.backends.cuda.enable_mem_efficient_sdp(True)
+
 from src.regime_w.arms import build_all_arms
 from src.regime_w.reward import Trajectory, compute_rewards_for_question
 from src.common.answer_utils import extract_answer, normalize_answer
@@ -87,12 +93,17 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # Load Abel base model
-    print(f"Loading Abel base model in bf16...")
+    # Detect dtype support (bf16 for H100/A100, fp16 fallback)
+    use_bf16 = torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False
+    dtype = torch.bfloat16 if use_bf16 else torch.float16
+    dtype_name = "bf16" if use_bf16 else "fp16"
+    
+    # Load Abel base model with detected dtype
+    print(f"Loading Abel base model in {dtype_name}...")
     base_model = AutoModelForCausalLM.from_pretrained(
         args.base_model,
         device_map="auto",
-        torch_dtype=torch.bfloat16,
+        torch_dtype=dtype,
     )
 
     # Load SFT LoRA adapter
