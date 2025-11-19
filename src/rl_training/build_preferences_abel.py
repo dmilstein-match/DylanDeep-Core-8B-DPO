@@ -75,7 +75,8 @@ def main():
             worst = correct_trajs[-1]
             
             # Only create pair if there's meaningful difference
-            if best["reward"] > worst["reward"] + 0.1:
+            # Lowered threshold to 0.01 to capture coherence variance from length differences
+            if best["reward"] > worst["reward"] + 0.01:
                 preferences.append({
                     "question": rec["question"],
                     "gold_answer": rec["gold_answer"],

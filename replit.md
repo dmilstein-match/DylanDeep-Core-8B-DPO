@@ -2,7 +2,7 @@
 
 ## Overview
 
-Looper-Math-Platinum is a private research project focused on advancing mathematical reasoning capabilities using a proprietary coherence-aware training methodology. The project leverages the Abel-7B-002 model as its foundation, applying a three-phase training pipeline: Supervised Fine-Tuning (SFT), a proprietary multi-armed bandit coherence evaluation (Regime W), and preference-based Reinforcement Learning via DPO. The primary objective is to develop a high-performance, privately-hosted math reasoning model that first ensures correctness and then optimizes for the coherence and clarity of its solutions.
+Looper-Math-Platinum is a private research project focused on advancing mathematical reasoning capabilities using a proprietary coherence-aware training methodology. The project leverages the Abel-7B-002 model as its foundation, applying a **PPO → DPO** training pipeline: PPO for correctness-only RL (DeepSeek-style), followed by Regime W coherence evaluation (8-armed bandit), and preference-based DPO for coherence shaping. The primary objective is to develop a high-performance, privately-hosted math reasoning model that first ensures correctness via PPO and then optimizes for the coherence and clarity of its solutions via DPO.
 
 ## User Preferences
 
@@ -14,11 +14,12 @@ Preferred communication style: Simple, everyday language.
 Not applicable as this is a backend model training and evaluation project with no direct user interface.
 
 ### Technical Implementations
-The core system is built around a three-phase training pipeline for the `GAIR/Abel-7B-002` model:
+The core system is built around a **PPO → DPO** training pipeline for the `GAIR/Abel-7B-002` model:
 
-1.  **Supervised Fine-Tuning (SFT)**: Utilizes LoRA on the full-precision Abel model with the GSM8K dataset, employing a tutoring-style prompt format.
-2.  **Regime W Coherence Module (Proprietary)**: An 8-armed bandit system evaluates reasoning strategies based on final answer agreement (`s_end`), path consistency (`s_path`), and a combined coherence score (`s_wm`). It calculates per-trajectory rewards, integrating correctness, coherence, and length penalties.
-3.  **Preference-Based Reinforcement Learning (DPO)**: Constructs preference pairs from Regime W rollouts, prioritizing correctness first (correct vs. incorrect trajectories) and then coherence (high vs. low coherence among correct trajectories). These pairs are used to fine-tune the LoRA adapter of the SFT model, optimizing for coherence.
+1.  **PPO Correctness Training**: Trains Abel base model with LoRA using pure correctness reward (1.0 if correct, 0.0 if wrong). Uses TRL's PPOTrainer with value head during training. Saves only LoRA adapters (value head discarded post-training).
+2.  **Regime W Rollout Collection**: Generates 8 trajectories per question using PPO checkpoint. An 8-armed bandit system evaluates group coherence based on final answer agreement (`s_end`), path consistency (`s_path`), counterfactual analysis (`s_cf`), and weighted coherence score (`s_wm`). Computes per-trajectory rewards integrating correctness, per-question coherence, and length penalties.
+3.  **Preference Pair Construction**: Builds two types of preference pairs: (a) correctness pairs (correct vs incorrect), (b) coherence pairs (high vs low coherence among correct trajectories). Threshold lowered to 0.01 to capture variance from length differences.
+4.  **DPO Coherence Training**: Fine-tunes PPO LoRA checkpoint using coherence preferences. Uses PPO checkpoint as both policy (trainable) and reference (frozen) models, optimizing for coherence while maintaining correctness.
 
 ### Feature Specifications
 -   **Model Base**: `GAIR/Abel-7B-002` (7B parameters, ~80% GSM8K baseline).
@@ -29,25 +30,30 @@ The core system is built around a three-phase training pipeline for the `GAIR/Ab
 
 ### System Design Choices
 -   **Development Environment**: Replit for coding and version control, integrated with a private GitHub repository.
--   **Training Infrastructure**: Lambda GPU instances (A10/A100) for model training, ensuring private hosting of model weights.
--   **Architectural Pattern**: LoRA (Low-Rank Adaptation) for efficient fine-tuning, applied to both SFT and DPO phases.
+-   **Training Infrastructure**: Lambda GPU instances (8× H100 SXM5) for model training, ensuring private hosting of model weights.
+-   **Architectural Pattern**: LoRA (Low-Rank Adaptation) for efficient fine-tuning. PPO training uses value head (discarded after training), rollout/DPO load base + LoRA adapters directly.
+-   **No SFT Phase**: Pipeline starts directly from Abel base model with PPO, skipping traditional SFT.
 -   **Privacy**: Emphasis on self-hosted weights and no reliance on external APIs for inference or training.
 -   **Workflow**: Code developed in Replit, pushed to GitHub, then pulled to Lambda for execution.
 
-## Abel Pipeline Execution
+## Abel PPO → DPO Pipeline Execution
 
-### Phase 1: Supervised Fine-Tuning
+### Phase 1: PPO Correctness Training
 ```bash
-# On Lambda H100 GPU instance
-python src/baseline_sft/train_sft_abel.py
+# On Lambda 8× H100 GPU instance
+python src/rl_training/train_ppo_correctness.py --n_samples 2000
 
-# Output: checkpoints/abel_sft_lora/
+# Output: checkpoints/abel_ppo_lora/ (LoRA adapters only)
 ```
 
-### Phase 2: Regime W Rollout Collection
+### Phase 2: Regime W Rollout Collection (Multi-GPU)
 ```bash
-# Generate 8 trajectories per question with Regime W scoring
-python src/rl_training/collect_rollouts_abel.py
+# Generate 8 trajectories per question with Regime W scoring (19-min runtime!)
+python src/rl_training/collect_rollouts_abel_multigpu.py \
+  --base_model GAIR/Abel-7B-002 \
+  --lora_path checkpoints/abel_ppo_lora \
+  --n_samples 500 \
+  --n_gpus 8
 
 # Output: data/abel_regime_w_rollouts.jsonl
 # Contains per-trajectory rewards and correctness flags
@@ -55,32 +61,32 @@ python src/rl_training/collect_rollouts_abel.py
 
 ### Phase 3: Preference Pair Construction
 ```bash
-# Build correctness-first preference pairs
+# Build correctness-first preference pairs (threshold=0.01 for coherence pairs)
 python src/rl_training/build_preferences_abel.py
 
 # Output: data/abel_coherence_preferences.jsonl
 # Contains chosen/rejected pairs with correctness and coherence ranking
 ```
 
-### Phase 4: Coherence DPO Training
+### Phase 4: DPO Coherence Training
 ```bash
-# Train on preference pairs to optimize coherence
-python src/rl_training/train_dpo_coherence.py
+# Train on preference pairs to optimize coherence (PPO checkpoint as base)
+torchrun --nproc_per_node=8 src/rl_training/train_dpo_coherence.py
 
-# Output: checkpoints/abel_coherence_lora/
+# Output: checkpoints/abel_dpo_coherence_lora/
 ```
 
 ### Phase 5: Evaluation on GSM8K Platinum
 ```bash
-# Evaluate SFT checkpoint
-python src/eval/eval_abel_sft_platinum.py
+# Evaluate PPO checkpoint
+python src/eval/eval_abel_ppo_platinum.py
 
-# Evaluate Coherence checkpoint
-python src/eval/eval_abel_coherence_platinum.py
+# Evaluate DPO checkpoint
+python src/eval/eval_abel_dpo_platinum.py
 
 # Outputs: 
-#   outputs/abel_sft_platinum_eval.jsonl
-#   outputs/abel_coherence_platinum_eval.jsonl
+#   outputs/abel_ppo_platinum_eval.jsonl
+#   outputs/abel_dpo_coherence_platinum_eval.jsonl
 ```
 
 ## External Dependencies
@@ -89,8 +95,8 @@ python src/eval/eval_abel_coherence_platinum.py
 -   **Hugging Face Ecosystem**:
     -   `transformers`: Model loading, tokenization, inference.
     -   `datasets`: Dataset access (GSM8K).
-    -   `trl`: Transformer Reinforcement Learning (SFTTrainer, DPOTrainer).
-    -   `peft`: Parameter-Efficient Fine-Tuning (LoRA).
+    -   `trl`: Transformer Reinforcement Learning (PPOTrainer, DPOTrainer, AutoModelForCausalLMWithValueHead).
+    -   `peft`: Parameter-Efficient Fine-Tuning (LoRA via PeftModel and get_peft_model).
 -   `accelerate`: Distributed training and mixed-precision.
 -   `torch`: PyTorch deep learning framework.
 

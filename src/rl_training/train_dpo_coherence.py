@@ -11,9 +11,9 @@ torch.backends.cuda.enable_flash_sdp(True)
 torch.backends.cuda.enable_mem_efficient_sdp(True)
 
 BASE_MODEL = "GAIR/Abel-7B-002"
-SFT_PATH = "checkpoints/abel_sft_lora"
+PPO_PATH = "checkpoints/abel_ppo_lora"
 PREFERENCES_PATH = "data/abel_coherence_preferences.jsonl"
-RL_OUTPUT_DIR = "checkpoints/abel_coherence_lora"
+DPO_OUTPUT_DIR = "checkpoints/abel_dpo_coherence_lora"
 
 
 def build_prompt(question: str) -> str:
@@ -51,22 +51,22 @@ def main():
     print("Enabling non-reentrant gradient checkpointing for LoRA + DDP compatibility...")
     base_model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
 
-    # Load SFT LoRA as starting point for policy model
-    print(f"Loading Abel SFT LoRA adapter from {SFT_PATH}...")
-    policy_model = PeftModel.from_pretrained(base_model, SFT_PATH)
+    # Load PPO LoRA as starting point for policy model
+    print(f"Loading Abel PPO LoRA adapter from {PPO_PATH}...")
+    policy_model = PeftModel.from_pretrained(base_model, PPO_PATH)
     policy_model.tokenizer = tokenizer
     
     # Re-enable non-reentrant gradient checkpointing for PEFT model (required for H100 memory efficiency)
     policy_model.enable_input_require_grads()
     policy_model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
 
-    # Create separate reference model (frozen SFT) with same dtype
-    print(f"Loading separate reference model (frozen Abel + SFT LoRA) in {dtype_name}...")
+    # Create separate reference model (frozen PPO) with same dtype
+    print(f"Loading separate reference model (frozen Abel + PPO LoRA) in {dtype_name}...")
     ref_base = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
         torch_dtype=dtype,
     )
-    ref_model = PeftModel.from_pretrained(ref_base, SFT_PATH)
+    ref_model = PeftModel.from_pretrained(ref_base, PPO_PATH)
     ref_model.eval()
     ref_model.tokenizer = tokenizer
     for param in ref_model.parameters():
@@ -116,7 +116,7 @@ def main():
 
     # DPO training configuration (8× H100-optimized batch sizes)
     dpo_config = DPOConfig(
-        output_dir=RL_OUTPUT_DIR,
+        output_dir=DPO_OUTPUT_DIR,
         num_train_epochs=1,
         per_device_train_batch_size=2,
         gradient_accumulation_steps=2,
@@ -150,13 +150,13 @@ def main():
     trainer.train()
 
     # Save coherence LoRA adapter
-    print(f"\nSaving coherence LoRA adapter to {RL_OUTPUT_DIR}...")
-    policy_model.save_pretrained(RL_OUTPUT_DIR)
-    tokenizer.save_pretrained(RL_OUTPUT_DIR)
+    print(f"\nSaving coherence LoRA adapter to {DPO_OUTPUT_DIR}...")
+    policy_model.save_pretrained(DPO_OUTPUT_DIR)
+    tokenizer.save_pretrained(DPO_OUTPUT_DIR)
     
     print(f"\n{'=' * 80}")
     print("Abel Coherence DPO training complete!")
-    print(f"Coherence LoRA adapter saved to: {RL_OUTPUT_DIR}")
+    print(f"Coherence LoRA adapter saved to: {DPO_OUTPUT_DIR}")
     print(f"{'=' * 80}")
 
 

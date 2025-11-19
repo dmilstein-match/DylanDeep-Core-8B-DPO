@@ -11,6 +11,7 @@ from multiprocessing import Process, Queue
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft import PeftModel
 from datasets import load_dataset
 from tqdm import tqdm
 
@@ -37,16 +38,18 @@ def build_prompt(question: str, system_prompt: str) -> str:
 
 def gpu_worker(
     gpu_id: int,
-    model_path: str,
+    base_model_path: str,
+    lora_path: str,
     questions_queue: Queue,
     results_queue: Queue,
 ):
     """
-    Worker process that loads model on a specific GPU and processes questions.
+    Worker process that loads base model + LoRA on a specific GPU and processes questions.
     
     Args:
         gpu_id: GPU device ID (0-7)
-        model_path: Path to merged model
+        base_model_path: Path to GAIR/Abel-7B-002 base model
+        lora_path: Path to PPO LoRA adapter checkpoint
         questions_queue: Queue of (idx, question, gold_answer) tuples
         results_queue: Queue for results
     """
@@ -55,7 +58,7 @@ def gpu_worker(
     device = torch.device("cuda:0")  # Will be the only visible GPU
     
     # Load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(base_model_path, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     
@@ -63,14 +66,18 @@ def gpu_worker(
     use_bf16 = torch.cuda.is_bf16_supported()
     dtype = torch.bfloat16 if use_bf16 else torch.float16
     
-    # Load model on this GPU
-    model = AutoModelForCausalLM.from_pretrained(
-        model_path,
+    # Load base model
+    base_model = AutoModelForCausalLM.from_pretrained(
+        base_model_path,
         torch_dtype=dtype,
         device_map={"": device},
         trust_remote_code=True,
         low_cpu_mem_usage=True,
     )
+    
+    # Load LoRA adapter and explicitly move to device
+    model = PeftModel.from_pretrained(base_model, lora_path)
+    model = model.to(device)
     model.eval()
     
     # Build arms
@@ -162,10 +169,16 @@ def main():
         help="Path to GSM8K training data JSONL file",
     )
     parser.add_argument(
-        "--model_path",
+        "--base_model",
         type=str,
-        default="checkpoints/abel_sft_merged_fixed",
-        help="Path to merged Abel SFT model",
+        default="GAIR/Abel-7B-002",
+        help="Path or name of base model (default: GAIR/Abel-7B-002)",
+    )
+    parser.add_argument(
+        "--lora_path",
+        type=str,
+        default="checkpoints/abel_ppo_lora",
+        help="Path to PPO LoRA adapter checkpoint",
     )
     parser.add_argument(
         "--out_path",
@@ -191,7 +204,8 @@ def main():
     print("Abel Regime W Rollout Collection (Multi-GPU)")
     print("=" * 80)
     print(f"\nConfiguration:")
-    print(f"  Merged model: {args.model_path}")
+    print(f"  Base model: {args.base_model}")
+    print(f"  LoRA path: {args.lora_path}")
     print(f"  Data path: {args.data_path}")
     print(f"  Output path: {args.out_path}")
     print(f"  N samples: {args.n_samples}")
@@ -222,7 +236,7 @@ def main():
     for gpu_id in range(args.n_gpus):
         p = Process(
             target=gpu_worker,
-            args=(gpu_id, args.model_path, questions_queue, results_queue),
+            args=(gpu_id, args.base_model, args.lora_path, questions_queue, results_queue),
         )
         p.start()
         workers.append(p)

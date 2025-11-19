@@ -1,0 +1,129 @@
+Let’s lock this in cleanly so we stop bouncing between bases.
+
+Given everything you’ve said + your goals, here’s what I’m going to assume and run with:
+
+We use abelhiben/gsm8k-lcm-abliteration as the base model.
+(That is the “Abel fine-tuned GSM8K model” from your original plan.)
+
+Not GAIR/Abel-7B-002 directly, but the GSM8K-tuned Abel checkpoint on top of it.
+
+⸻
+
+Why this is the right call
+	1.	It’s already trained for GSM8K.
+So we skip all the painful SFT work that just blew up on Abel-7B-002 + TRL.
+	2.	Matches your original plan.
+Your earlier plan literally had:
+
+BASE_MODEL = "abelhiben/gsm8k-lcm-abliteration"
+
+and then:
+	•	PPO on correctness → checkpoints/lora_rl_correct
+	•	DPO on coherence preferences → checkpoints/lora_coherence
+	•	No SFT step at all.
+
+	3.	Fits your goal:
+“Take a strong GSM8K model and add coherence (DeepSeek-style) without wrecking accuracy.”
+
+That’s exactly what “start from abelhiben/gsm8k-lcm-abliteration + RL/DPO” gives us.
+
+⸻
+
+What this means in practice
+
+Anywhere in your repo / scripts we currently have something like:
+
+BASE_MODEL = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
+# or
+BASE_MODEL = "GAIR/Abel-7B-002"
+
+we change it to:
+
+BASE_MODEL = "abelhiben/gsm8k-lcm-abliteration"
+
+Concretely, for the RL pipeline:
+
+1. Correctness-only PPO (Phase 1)
+
+In src/rl_training/train_ppo_correctness.py (or whatever we name it), we’ll:
+
+BASE_MODEL = "abelhiben/gsm8k-lcm-abliteration"
+
+tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
+policy_model = AutoModelForCausalLM.from_pretrained(
+    BASE_MODEL,
+    device_map="auto",
+    torch_dtype=torch.bfloat16,
+)
+
+Then LoRA gets attached to this model, and PPO pushes it toward even higher correctness on GSM8K train.
+
+Output:
+checkpoints/lora_rl_correct/ (LoRA adapters only).
+
+2. Coherence DPO (Phase 2)
+
+In src/rl_training/train_dpo_coherence.py:
+	•	Reference model = the correctness-PPO LoRA:
+
+ref_model = AutoModelForCausalLM.from_pretrained(
+    BASE_MODEL,  # abelhiben/gsm8k-lcm-abliteration
+    device_map="auto",
+    torch_dtype=torch.bfloat16,
+)
+ref_model = PeftModel.from_pretrained(ref_model, "checkpoints/lora_rl_correct")
+
+
+	•	Policy model = a copy of that, which DPO will move toward “more coherent” choices on your preference pairs:
+
+policy_model = AutoModelForCausalLM.from_pretrained(
+    BASE_MODEL,
+    device_map="auto",
+    torch_dtype=torch.bfloat16,
+)
+policy_model = PeftModel.from_pretrained(policy_model, "checkpoints/lora_rl_correct")
+
+
+
+DPO then nudges the LoRA to prefer high-coherence (but still correct) traces.
+
+Output:
+checkpoints/lora_coherence/ (this becomes “Looper-Abel GSM8K Platinum” or whatever name you want).
+
+3. Eval on GSM8K Platinum
+
+In your src/eval/eval_platinum_abel.py (or similar):
+	•	Use BASE_MODEL = "abelhiben/gsm8k-lcm-abliteration" for the pure base line.
+	•	Then load:
+	•	BASE + lora_rl_correct
+	•	BASE + lora_coherence
+
+Each as:
+
+base = AutoModelForCausalLM.from_pretrained(BASE_MODEL, device_map="auto", torch_dtype=torch.bfloat16)
+model = PeftModel.from_pretrained(base, "checkpoints/lora_coherence")
+
+So your leaderboard lines are literally:
+	•	Abel GSM8K (baseline) – abelhiben/gsm8k-lcm-abliteration
+	•	Abel + correctness PPO
+	•	Abel + correctness PPO + coherence DPO
+
+⸻
+
+What you should do next (simple version)
+
+On Lambda (H100 box):
+	1.	Stop touching Abel SFT.
+That SFT path with GAIR/Abel-7B-002 + TRL is just noise now.
+	2.	Update the BASE_MODEL constant in the new RL scripts (or config) to:
+
+BASE_MODEL = "abelhiben/gsm8k-lcm-abliteration"
+
+
+	3.	Run the pipeline in order:
+	1.	build_preferences.py (or equivalent) → create correctness rollouts & preference pairs if needed.
+	2.	python -m src.rl_training.train_ppo_correctness
+	3.	python -m src.rl_training.train_dpo_coherence
+	4.	python -m src.eval.eval_platinum_abel (batched, 8 GPUs, only Platinum test)
+
+If you paste me your current train_ppo_correctness.py and train_dpo.py, I’ll rewrite them exactly for this abelhiben/gsm8k-lcm-abliteration setup so you and your dev can just drop them in and go.
