@@ -115,13 +115,11 @@ def main():
     # Create trainer (TRL 0.25.1 compatibility)
     trainer = SFTTrainer(
         model=model,
-        processing_class=tokenizer,
+        tokenizer=tokenizer,
         peft_config=lora_config,
         train_dataset=dataset,
         formatting_func=lambda examples: formatting_func(examples, tokenizer),
         args=sft_config,
-        dataset_text_field=None,
-        add_eos_token=False,
     )
 
     print("\nStarting Abel SFT (LoRA) training...\n")
