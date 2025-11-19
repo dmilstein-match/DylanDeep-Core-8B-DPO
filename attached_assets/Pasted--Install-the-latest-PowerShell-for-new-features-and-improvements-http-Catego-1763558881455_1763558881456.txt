@@ -1,0 +1,35 @@
++ Install the latest PowerShell for new features and improvements! http ...
++ ~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (Install:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\dylan>
+PS C:\Users\dylan> PS C:\Users\dylan> scp ubuntu@192-222-54-90:~/looper-math-platinum-8b/data/abel_regime_w_rollouts_70pct.jsonl .
+Get-Process : A positional parameter cannot be found that accepts argument 'scp'.
+At line:1 char:1
++ PS C:\Users\dylan> scp ubuntu@192-222-54-90:~/looper-math-platinum-8b ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidArgument: (:) [Get-Process], ParameterBindingException
+    + FullyQualifiedErrorId : PositionalParameterNotFound,Microsoft.PowerShell.Commands.GetProcessCommand
+
+PS C:\Users\dylan> ssh: Could not resolve hostname 192-222-54-90: No such host is known.
+ssh: : The term 'ssh:' is not recognized as the name of a cmdlet, function, script file, or operable program. Check
+the spelling of the name, or if a path was included, verify that the path is correct and try again.
+At line:1 char:1
++ ssh: Could not resolve hostname 192-222-54-90: No such host is known.
++ ~~~~
+    + CategoryInfo          : ObjectNotFound: (ssh::String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\dylan> C:\WINDOWS\System32\OpenSSH\scp.exe: Connection closed
+C:\WINDOWS\System32\OpenSSH\scp.exe: : The term 'C:\WINDOWS\System32\OpenSSH\scp.exe:' is not recognized as the name
+of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included,
+verify that the path is correct and try again.
+At line:1 char:1
++ C:\WINDOWS\System32\OpenSSH\scp.exe: Connection closed
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (C:\WINDOWS\System32\OpenSSH\scp.exe::String) [], CommandNotFoundExcepti
+   on
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\dylan> PS C:\Users\dylan>
