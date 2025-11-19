@@ -1,0 +1,93 @@
+Nice, this one is actually simple: your **code and TRL version are slightly mismatched.**
+
+Error:
+
+> `TypeError: SFTTrainer.__init__() got an unexpected keyword argument 'max_seq_length'`
+
+Translation:
+In the TRL version you have installed (`trl==0.25.1`), `SFTTrainer` **no longer accepts** a `max_seq_length=` argument directly. Your `train_sft_abel.py` was written for an older API.
+
+We’ll fix it by **removing that one argument**. Everything else stays the same.
+
+---
+
+## 1. Edit `train_sft_abel.py` to drop `max_seq_length`
+
+From your repo root:
+
+```bash
+cd ~/looper-math-platinum-8b
+source .venv/bin/activate
+nano src/baseline_sft/train_sft_abel.py
+```
+
+In nano:
+
+1. Scroll down to the `SFTTrainer(` call around line ~100–120.
+   It will look roughly like:
+
+   ```python
+   trainer = SFTTrainer(
+       model=model,
+       tokenizer=tokenizer,
+       train_dataset=train_ds,
+       dataset_text_field="text",
+       max_seq_length=MAX_SEQ_LEN,
+       args=training_args,
+       packing=False,
+       formatting_func=format_example,
+   )
+   ```
+
+2. **Delete the whole line** with `max_seq_length=...`, so it becomes:
+
+   ```python
+   trainer = SFTTrainer(
+       model=model,
+       tokenizer=tokenizer,
+       train_dataset=train_ds,
+       dataset_text_field="text",
+       args=training_args,
+       packing=False,
+       formatting_func=format_example,
+   )
+   ```
+
+3. Save & exit nano:
+
+   * `Ctrl + O`, then ENTER  (write out)
+   * `Ctrl + X`               (exit)
+
+That’s it — we’re just letting SFTTrainer use its default sequence length (it will rely on the model/tokenizer’s `model_max_length`, which is fine for GSM8K).
+
+---
+
+## 2. Re-run the Abel SFT training
+
+From the same shell:
+
+```bash
+cd ~/looper-math-platinum-8b
+source .venv/bin/activate
+
+accelerate launch src/baseline_sft/train_sft_abel.py
+```
+
+You should now see:
+
+* “Loading training data from JSONL…”
+* “Loading tokenizer & model: abel-alpha/gsm8k-pt-llama-3.1-8b-instruct” (or similar)
+* Training logs (`loss`, `mean_token_accuracy`, etc.) from all 8 ranks
+* At the end: something like “LoRA SFT model saved” into `checkpoints/sft_abel_lora` (or whatever path that script uses)
+
+If you see **another** `TypeError` or anything weird, copy the *new* traceback and I’ll tell you exactly what to tweak next.
+
+---
+
+### Why this fix is safe
+
+* The only change is removing an argument the new TRL API doesn’t support.
+* Your dataset is already being tokenized/truncated earlier in the script; SFTTrainer doesn’t need an extra `max_seq_length` kwarg anymore.
+* We’re not touching your RL / Regime W logic at all — just making the SFT trainer compatible with the libs in your venv.
+
+Run that edit + relaunch and tell me what the next log line looks like.

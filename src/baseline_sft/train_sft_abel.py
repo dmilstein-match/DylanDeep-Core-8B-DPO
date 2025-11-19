@@ -115,7 +115,6 @@ def main():
         train_dataset=dataset,
         formatting_func=formatting_func,
         args=sft_config,
-        max_seq_length=1024,
     )
 
     print("\nStarting Abel SFT (LoRA) training...\n")
