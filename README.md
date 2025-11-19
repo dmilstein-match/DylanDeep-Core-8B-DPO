@@ -2,19 +2,42 @@
 
 Private research project for training Abel-7B-002 with coherence-aware mathematical reasoning using:
 - Baseline supervised fine-tuning (SFT) with LoRA
-- Regime W coherence module (proprietary multi-armed bandit approach)
+- **Regime W coherence module** (proprietary 11-armed framework with diagnostic probes)
 - Correctness-first coherence DPO reinforcement learning
 - Evaluation on GSM8K Platinum benchmark
+
+## 🚀 Quick Start
+
+**For full deployment instructions, see [DEPLOYMENT.md](DEPLOYMENT.md)**
 
 ## Overview
 
 This project trains a high-performance mathematical reasoning model by:
 
 1. **Fine-tuning Abel-7B-002** (~80% GSM8K baseline) with LoRA on full-precision bf16
-2. **Generating multi-trajectory rollouts** using Regime W's 8-armed bandit to evaluate reasoning coherence
+2. **Generating multi-trajectory rollouts** using Regime W's **11-armed framework** (8 variance + 3 diagnostic probes) to evaluate reasoning coherence
 3. **Building preference pairs** that prioritize correctness first, then coherence quality
-4. **Training with DPO** to optimize for both correct answers and clear explanations
+4. **Training with DPO** to optimize for both correct answers and clear explanations (5e-5 LR, 3 epochs)
 5. **Evaluating on GSM8K Platinum** (1,210 cleaned test examples)
+
+### Regime W Framework (Three-Tier Architecture)
+
+**Tier 1: Training Mechanics**
+- Learning rate: 5e-5 (10x higher for actual weight updates)
+- Training epochs: 3 (up from 1)
+
+**Tier 2: Structured Probe Arms (11 total)**
+- 8 variance arms: `wolfram_0-3`, `maudlin_0-3` (temps 0.2-0.5)
+- 3 diagnostic probes:
+  - `wolfram_standard` (A): Canonical clear reasoning
+  - `wolfram_rephrase` (A′): Paraphrase stability check
+  - `maudlin_cf1` (CF1): Counterfactual robustness probe
+
+**Tier 3: Upgraded Coherence Metrics**
+- **s_end**: Final answer agreement (pairwise)
+- **s_path**: Reasoning coherence (40% length + 60% token overlap via Jaccard similarity)
+- **s_cf**: Counterfactual robustness (answer consensus across arms, replaces constant 0.5)
+- **s_wm**: Weighted combined score (0.4×s_end + 0.3×s_path + 0.3×s_cf)
 
 ## Project Structure
 
@@ -33,8 +56,8 @@ looper-math-platinum/
       build_preferences_abel.py   # Correctness-first preference construction
       train_dpo_coherence.py      # Coherence DPO training
     regime_w/                     # PRIVATE: Multi-path coherence engine
-      arms.py                     # 8-arm bandit (Wolfram + Maudlin strategies)
-      scoring.py                  # s_end, s_path, s_cf, s_wm metrics
+      arms.py                     # 11-arm framework (8 variance + 3 diagnostic probes)
+      scoring.py                  # s_end, s_path, s_cf, s_wm metrics (upgraded)
       reward.py                   # Combined correctness + coherence rewards
     eval/
       eval_abel_sft_platinum.py   # Evaluate SFT checkpoint on Platinum
@@ -177,12 +200,27 @@ Unlike traditional DPO that only optimizes style, this pipeline teaches:
 
 This ensures the model prioritizes correctness before optimizing explanation quality.
 
-### Regime W Coherence Scoring
+### Regime W Coherence Scoring (Three-Tier Upgrade)
+
 The proprietary Regime W module evaluates each trajectory across multiple dimensions:
-- **s_end**: Final answer agreement across arms
-- **s_path**: Reasoning path consistency
-- **s_cf**: Counterfactual robustness
+
+**Updated Metrics (Tier 3):**
+- **s_end**: Final answer agreement (pairwise comparison across all arms)
+- **s_path**: Reasoning path coherence
+  - 40% length variance (low variance = high coherence)
+  - 60% token overlap (Jaccard similarity across reasoning paths)
+  - Explicitly rewards A ↔ A′ stability (paraphrase robustness)
+- **s_cf**: Counterfactual robustness (NEW: real implementation)
+  - Measures answer consensus across all arms including CF1 probe
+  - 1.0 = perfect agreement, 0.0 = complete disagreement
+  - Replaces previous constant 0.5 placeholder
 - **s_wm**: Weighted coherence metric
+  - Formula: `0.4 * s_end + 0.3 * s_path + 0.3 * s_cf`
+
+**Structured Probe Arms (Tier 2):**
+- **A (wolfram_standard)**: Canonical clear reasoning baseline
+- **A′ (wolfram_rephrase)**: Tests stability under problem restatement
+- **CF1 (maudlin_cf1)**: Probes for edge cases and reasoning traps
 
 Per-trajectory rewards combine: `ALPHA_CORRECT * correct + BETA_COHERENCE * s_wm - length_penalty`
 
@@ -238,6 +276,8 @@ pip install -r requirements.txt
 
 ## Quick Start on Lambda H100
 
+**See [DEPLOYMENT.md](DEPLOYMENT.md) for complete step-by-step instructions.**
+
 ```bash
 # 1. Launch 8× H100 SXM5 instance and SSH in
 ssh -i ~/path/to/key.pem ubuntu@<H100-IP>
@@ -248,16 +288,27 @@ cd looper-math-platinum
 pip install -r requirements.txt
 accelerate config --config_file .accelerate_config.yaml
 
-# 3. Run complete pipeline
+# 3. Download datasets (NEW)
+python download_gsm8k.py
+# Creates: data/gsm8k_train.jsonl, data/gsm8k_platinum_test.jsonl
+
+# 4. Run complete pipeline
 # Training scripts use accelerate for multi-GPU distribution (8× H100)
 accelerate launch src/baseline_sft/train_sft_abel.py
-# Rollout/eval scripts use single-process to avoid output corruption (still H100-optimized)
-python -m src.rl_training.collect_rollouts_abel
-python -m src.rl_training.build_preferences_abel
-accelerate launch src/rl_training/train_dpo_coherence.py
-python -m src.eval.eval_abel_coherence_platinum
 
-# 4. Analyze results
+# Rollout collection with 11-arm framework (NEW)
+python src/rl_training/collect_rollouts_abel_batched.py \
+  --model_path checkpoints/abel_sft_merged_fixed \
+  --n_samples 500
+
+# Build preferences and train DPO with upgraded config
+python src/rl_training/build_preferences_abel.py
+accelerate launch src/rl_training/train_dpo_coherence.py  # 5e-5 LR, 3 epochs
+
+# Evaluate
+python src/eval/eval_abel_coherence_platinum.py
+
+# 5. Analyze results
 cat outputs/abel_coherence_platinum_eval.jsonl | jq .correct | grep true | wc -l
 ```
 
