@@ -65,12 +65,16 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     
-    # Load model in bfloat16 (H100 can handle full precision easily)
-    print(f"Loading Abel base model in bf16...")
+    # Detect dtype support (bf16 for H100/A100, fp16 fallback)
+    use_bf16 = torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False
+    dtype = torch.bfloat16 if use_bf16 else torch.float16
+    dtype_name = "bf16" if use_bf16 else "fp16"
+    
+    print(f"Loading Abel base model in {dtype_name}...")
     model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
         device_map="auto",
-        torch_dtype=torch.bfloat16,
+        torch_dtype=dtype,
     )
 
     # LoRA configuration
@@ -90,7 +94,8 @@ def main():
         per_device_train_batch_size=4,
         gradient_accumulation_steps=4,
         learning_rate=5e-5,
-        bf16=True,
+        bf16=use_bf16,
+        fp16=not use_bf16,
         logging_steps=10,
         save_steps=200,
         save_total_limit=3,

@@ -30,12 +30,17 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # Load base model in bf16
-    print(f"Loading Abel base model in bf16...")
+    # Detect dtype support (bf16 for H100/A100, fp16 fallback)
+    use_bf16 = torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False
+    dtype = torch.bfloat16 if use_bf16 else torch.float16
+    dtype_name = "bf16" if use_bf16 else "fp16"
+
+    # Load base model with detected dtype
+    print(f"Loading Abel base model in {dtype_name}...")
     base_model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
         device_map="auto",
-        torch_dtype=torch.bfloat16,
+        torch_dtype=dtype,
     )
     base_model.gradient_checkpointing_enable()
 
@@ -48,12 +53,12 @@ def main():
     policy_model.enable_input_require_grads()
     policy_model.gradient_checkpointing_enable()
 
-    # Create separate reference model (frozen SFT)
-    print("Loading separate reference model (frozen Abel + SFT LoRA)...")
+    # Create separate reference model (frozen SFT) with same dtype
+    print(f"Loading separate reference model (frozen Abel + SFT LoRA) in {dtype_name}...")
     ref_base = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
         device_map="auto",
-        torch_dtype=torch.bfloat16,
+        torch_dtype=dtype,
     )
     ref_model = PeftModel.from_pretrained(ref_base, SFT_PATH)
     ref_model.eval()
@@ -73,17 +78,15 @@ def main():
             "rejected": examples["rejected"],
         }
 
-    # Remove extra columns to keep only prompt, chosen, rejected
-    extra_cols = ["question", "gold_answer", "chosen_reward", "rejected_reward"]
-    # Only remove columns that exist
-    cols_to_remove = [c for c in extra_cols if c in dataset.column_names]
-    if "pair_type" in dataset.column_names:
-        cols_to_remove.append("pair_type")
-    
+    # Ultra-explicit column removal: keep ONLY prompt, chosen, rejected
+    # Remove all other columns to ensure clean DPO dataset
     dataset = dataset.map(
         format_dataset,
         batched=True,
-        remove_columns=cols_to_remove
+        remove_columns=[
+            c for c in dataset.column_names
+            if c not in ["prompt", "chosen", "rejected"]
+        ]
     )
 
     print(f"Loaded {len(dataset)} preference pairs")
@@ -105,9 +108,7 @@ def main():
     except:
         pass
 
-    # DPO training configuration (Lambda-compatible)
-    use_bf16 = torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False
-    
+    # DPO training configuration (Lambda-compatible, uses detected dtype from above)
     dpo_config = DPOConfig(
         output_dir=RL_OUTPUT_DIR,
         num_train_epochs=1,
