@@ -1,58 +1,16 @@
 import os
 import json
-import re
 from typing import List, Dict
 
 from datasets import load_dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import PeftModel
 
+from src.common.answer_utils import extract_answer, normalize_answer
+
 
 OUT_DIR = "outputs"
 OUT_PATH = os.path.join(OUT_DIR, "abel_coherence_platinum_eval.jsonl")
-
-
-def normalize_answer(ans: str) -> str:
-    """
-    Normalize answer for comparison.
-    - Strip whitespace
-    - Lowercase
-    - Remove trailing .0 from decimals (42.0 -> 42)
-    - Handle commas in numbers (1,000 -> 1000)
-    """
-    ans = ans.strip().lower()
-    ans = ans.replace(",", "")
-
-    # Convert "42.0" to "42" when it's a pure number
-    try:
-        if "." in ans:
-            num = float(ans)
-            if num == int(num):
-                ans = str(int(num))
-    except ValueError:
-        pass
-
-    return ans
-
-
-def extract_answer(text: str) -> str:
-    """
-    Extract the final numeric answer from the model's output.
-    - Prefer the number after '####' if present.
-    - Otherwise, take the last integer/decimal in the text.
-    """
-    marker = "####"
-    if marker in text:
-        tail = text.split(marker)[-1]
-        m = re.search(r"-?\d+\.?\d*", tail)
-        if m:
-            return m.group(0).strip()
-
-    nums = re.findall(r"-?\d+\.?\d*", text)
-    if nums:
-        return nums[-1].strip()
-
-    return text.strip()
 
 
 def build_prompt(question: str) -> str:

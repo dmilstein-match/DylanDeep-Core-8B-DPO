@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from typing import List, Dict, Optional
-import re
 
 from .scoring import (
     s_end_for_question,
@@ -8,6 +7,7 @@ from .scoring import (
     s_cf_for_question,
     s_wm_for_question,
 )
+from src.common.answer_utils import extract_answer, normalize_answer
 
 
 ALPHA_CORRECT = 1.0
@@ -23,31 +23,6 @@ class Trajectory:
     reasoning: str
     answer: str
     num_tokens: int
-
-
-def extract_answer(text: str) -> str:
-    """
-    Prefer the number after '####'; otherwise last number in text.
-    """
-    marker = "####"
-    if marker in text:
-        tail = text.split(marker)[-1]
-        m = re.search(r"-?\d+\.?\d*", tail)
-        if m:
-            return m.group(0).strip()
-
-    nums = re.findall(r"-?\d+\.?\d*", text)
-    if nums:
-        return nums[-1].strip()
-
-    return text.strip()
-
-
-def normalize_answer(ans: str) -> str:
-    """
-    Simple normalization for answer comparison.
-    """
-    return ans.strip().lower()
 
 
 def compute_regime_w_metrics(question: str, trajectories: List[Trajectory]) -> Dict:

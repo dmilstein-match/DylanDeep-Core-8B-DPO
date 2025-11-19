@@ -6,7 +6,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 
 from src.regime_w.arms import build_all_arms
-from src.regime_w.reward import Trajectory, compute_rewards_for_question, extract_answer, normalize_answer
+from src.regime_w.reward import Trajectory, compute_rewards_for_question
+from src.common.answer_utils import extract_answer, normalize_answer
 
 
 DATA_PATH = "data/gsm8k_train.jsonl"
