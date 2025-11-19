@@ -105,7 +105,6 @@ def main():
         logging_steps=10,
         save_steps=200,
         save_total_limit=3,
-        max_seq_length=1024,
     )
 
     # Create trainer
@@ -116,6 +115,7 @@ def main():
         train_dataset=dataset,
         formatting_func=formatting_func,
         args=sft_config,
+        max_seq_length=1024,
     )
 
     print("\nStarting Abel SFT (LoRA) training...\n")
