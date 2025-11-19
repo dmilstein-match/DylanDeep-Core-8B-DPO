@@ -93,11 +93,11 @@ def main():
         task_type="CAUSAL_LM",
     )
 
-    # Training configuration (H100-optimized batch sizes)
+    # Training configuration (8× H100-optimized batch sizes)
     sft_config = SFTConfig(
         output_dir=OUTPUT_DIR,
         num_train_epochs=1,
-        per_device_train_batch_size=8,
+        per_device_train_batch_size=2,
         gradient_accumulation_steps=2,
         learning_rate=5e-5,
         bf16=use_bf16,
@@ -119,8 +119,13 @@ def main():
     )
 
     print("\nStarting Abel SFT (LoRA) training...\n")
-    print(f"Effective batch size: {sft_config.per_device_train_batch_size * sft_config.gradient_accumulation_steps}")
-    print(f"Total training steps: {len(dataset) // (sft_config.per_device_train_batch_size * sft_config.gradient_accumulation_steps)}")
+    per_device_batch = sft_config.per_device_train_batch_size * sft_config.gradient_accumulation_steps
+    world_size = int(os.environ.get("WORLD_SIZE", torch.cuda.device_count() if torch.cuda.is_available() else 1))
+    global_batch = per_device_batch * world_size
+    print(f"Per-device effective batch size: {per_device_batch}")
+    print(f"World size (GPUs): {world_size}")
+    print(f"Global effective batch size: {global_batch}")
+    print(f"Total training steps: {len(dataset) // global_batch}")
     print()
 
     # Train

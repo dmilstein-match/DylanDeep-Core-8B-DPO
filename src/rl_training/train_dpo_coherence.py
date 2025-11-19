@@ -113,12 +113,12 @@ def main():
     except:
         pass
 
-    # DPO training configuration (H100-optimized batch sizes)
+    # DPO training configuration (8× H100-optimized batch sizes)
     dpo_config = DPOConfig(
         output_dir=RL_OUTPUT_DIR,
         num_train_epochs=1,
-        per_device_train_batch_size=16,
-        gradient_accumulation_steps=1,
+        per_device_train_batch_size=2,
+        gradient_accumulation_steps=2,
         learning_rate=5e-6,
         logging_steps=10,
         save_strategy="epoch",
@@ -136,7 +136,13 @@ def main():
     )
 
     print("Starting Abel Coherence DPO training...")
-    print(f"Effective batch size: {dpo_config.per_device_train_batch_size * dpo_config.gradient_accumulation_steps}")
+    per_device_batch = dpo_config.per_device_train_batch_size * dpo_config.gradient_accumulation_steps
+    import os
+    world_size = int(os.environ.get("WORLD_SIZE", torch.cuda.device_count() if torch.cuda.is_available() else 1))
+    global_batch = per_device_batch * world_size
+    print(f"Per-device effective batch size: {per_device_batch}")
+    print(f"World size (GPUs): {world_size}")
+    print(f"Global effective batch size: {global_batch}")
     print(f"Training epochs: {dpo_config.num_train_epochs}\n")
 
     # Train

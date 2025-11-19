@@ -44,7 +44,7 @@ looper-math-platinum/
 
 ## H100 Setup (Required for Multi-GPU Training)
 
-This pipeline is optimized for **2× H100 SXM5** instances with:
+This pipeline is optimized for **8× H100 SXM5** instances with:
 - BF16/FP16 automatic dtype detection
 - TF32 matmul acceleration
 - Flash attention kernels
@@ -58,11 +58,11 @@ git clone <your-private-repo>
 cd looper-math-platinum
 pip install -r requirements.txt
 
-# Configure Accelerate for 2× H100 GPUs
+# Configure Accelerate for 8× H100 GPUs
 accelerate config --config_file .accelerate_config.yaml
 ```
 
-The `.accelerate_config.yaml` file is pre-configured for 2 GPUs with bf16 mixed precision.
+The `.accelerate_config.yaml` file is pre-configured for 8 GPUs with bf16 mixed precision.
 
 ## Main Pipeline Commands
 
@@ -71,11 +71,11 @@ The `.accelerate_config.yaml` file is pre-configured for 2 GPUs with bf16 mixed 
 
 ### Phase 1: Supervised Fine-Tuning
 ```bash
-# Train Abel-7B-002 with LoRA on GSM8K training set (distributed across 2× H100)
+# Train Abel-7B-002 with LoRA on GSM8K training set (distributed across 8× H100)
 accelerate launch src/baseline_sft/train_sft_abel.py
 
 # Output: checkpoints/abel_sft_lora/
-# Batch size: 8 per device, gradient accumulation: 2 (effective batch=16 per GPU)
+# Batch size: 2 per device, gradient accumulation: 2 (effective batch=32 globally)
 ```
 
 ### Phase 2: Regime W Rollout Collection
@@ -109,11 +109,11 @@ python -m src.rl_training.build_preferences_abel
 
 ### Phase 4: Coherence DPO Training
 ```bash
-# Train DPO on preference pairs to optimize coherence (distributed across 2× H100)
+# Train DPO on preference pairs to optimize coherence (distributed across 8× H100)
 accelerate launch src/rl_training/train_dpo_coherence.py
 
 # Output: checkpoints/abel_coherence_lora/
-# Batch size: 16 per device, gradient accumulation: 1 (effective batch=16 per GPU)
+# Batch size: 2 per device, gradient accumulation: 2 (effective batch=32 globally)
 ```
 
 ### Phase 5: Evaluation on GSM8K Platinum (Batched, H100-Optimized)
@@ -165,7 +165,7 @@ Abel training uses bf16/fp16 (no quantization) on H100 GPUs for maximum quality,
 - **TensorFloat-32 (TF32) matmul**: ~2× speedup on matrix operations
 - **Flash Attention**: Memory-efficient attention kernels
 - **Batched evaluation**: 32 examples per batch for ~30× faster inference vs sequential
-- **Multi-GPU training**: Automatic distribution across 2× H100 via Accelerate
+- **Multi-GPU training**: Automatic distribution across 8× H100 via Accelerate
 
 This is a significant upgrade from legacy DeepSeek experiments that used 4-bit quantization.
 
@@ -212,7 +212,7 @@ pip install -r requirements.txt
 ## Quick Start on Lambda H100
 
 ```bash
-# 1. Launch 2× H100 SXM5 instance and SSH in
+# 1. Launch 8× H100 SXM5 instance and SSH in
 ssh -i ~/path/to/key.pem ubuntu@<H100-IP>
 
 # 2. Clone and setup
@@ -222,7 +222,7 @@ pip install -r requirements.txt
 accelerate config --config_file .accelerate_config.yaml
 
 # 3. Run complete pipeline
-# Training scripts use accelerate for multi-GPU distribution
+# Training scripts use accelerate for multi-GPU distribution (8× H100)
 accelerate launch src/baseline_sft/train_sft_abel.py
 # Rollout/eval scripts use single-process to avoid output corruption (still H100-optimized)
 python -m src.rl_training.collect_rollouts_abel
@@ -234,9 +234,9 @@ python -m src.eval.eval_abel_coherence_platinum
 cat outputs/abel_coherence_platinum_eval.jsonl | jq .correct | grep true | wc -l
 ```
 
-## Performance Benchmarks (2× H100 SXM5)
+## Performance Benchmarks (8× H100 SXM5)
 
-- **SFT Training**: ~2-3 hours (full GSM8K train set, effective batch=32)
-- **Rollout Collection**: ~4-6 hours (8 trajectories × 500 examples)
-- **DPO Training**: ~1-2 hours (preference pairs, effective batch=32)
-- **Platinum Evaluation**: ~15 minutes (1,210 examples, batched generation)
+- **SFT Training**: ~30-45 minutes (full GSM8K train set, effective batch=32 globally)
+- **Rollout Collection**: ~4-6 hours (8 trajectories × 500 examples, single GPU)
+- **DPO Training**: ~15-30 minutes (preference pairs, effective batch=32 globally)
+- **Platinum Evaluation**: ~15 minutes (1,210 examples, batched generation, single GPU)
