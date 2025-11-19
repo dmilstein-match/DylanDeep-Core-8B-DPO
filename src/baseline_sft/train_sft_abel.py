@@ -83,11 +83,6 @@ def main():
         torch_dtype=dtype,
         trust_remote_code=True,
     )
-    
-    # Enable non-reentrant gradient checkpointing for DDP compatibility
-    model.gradient_checkpointing_enable(
-        gradient_checkpointing_kwargs={"use_reentrant": False}
-    )
 
     # LoRA configuration (expanded to include MLP layers)
     lora_config = LoraConfig(
