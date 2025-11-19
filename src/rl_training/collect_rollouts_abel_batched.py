@@ -27,8 +27,6 @@ def build_prompt(question: str, system_prompt: str) -> str:
     """Build prompt with system message and question."""
     return (
         f"{system_prompt}\n\n"
-        "You are a careful math tutor. Solve the problem step-by-step, "
-        "then give the final answer in the format '#### 42'.\n\n"
         f"Problem:\n{question}\n\nSolution:\n"
     )
 
@@ -142,7 +140,13 @@ def main():
                 for i, arm in enumerate(arms):
                     # Get single prompt for this arm
                     arm_input = {k: v[i:i+1] for k, v in inputs.items()}
-                    
+
+                    # Set seed for reproducibility if provided in extra_cfg
+                    if arm.extra_cfg and "seed" in arm.extra_cfg:
+                        torch.manual_seed(arm.extra_cfg["seed"])
+                        if torch.cuda.is_available():
+                            torch.cuda.manual_seed_all(arm.extra_cfg["seed"])
+
                     # Generate with arm-specific temperature
                     gen = model.generate(
                         **arm_input,

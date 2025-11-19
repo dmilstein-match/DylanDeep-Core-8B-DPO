@@ -19,7 +19,7 @@ DPO_OUTPUT_DIR = "checkpoints/abel_dpo_coherence_lora"
 def build_prompt(question: str) -> str:
     return (
         "You are a careful math tutor. Solve the problem step-by-step, "
-        "then give the final answer in the format '#### 42'.\n\n"
+        "then give the final answer in the format 'Answer: 42'.\n\n"
         f"Problem:\n{question}\n\nSolution:\n"
     )
 
@@ -115,12 +115,13 @@ def main():
         pass
 
     # DPO training configuration (8× H100-optimized batch sizes)
+    # Updated config: 5e-5 LR (10x higher for actual weight updates) + 3 epochs
     dpo_config = DPOConfig(
         output_dir=DPO_OUTPUT_DIR,
-        num_train_epochs=1,
+        num_train_epochs=3,
         per_device_train_batch_size=2,
         gradient_accumulation_steps=2,
-        learning_rate=5e-6,
+        learning_rate=5e-5,
         logging_steps=10,
         save_strategy="epoch",
         bf16=use_bf16,
