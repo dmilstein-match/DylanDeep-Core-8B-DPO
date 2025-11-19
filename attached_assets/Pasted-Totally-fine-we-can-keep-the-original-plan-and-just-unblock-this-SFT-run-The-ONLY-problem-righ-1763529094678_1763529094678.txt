@@ -1,0 +1,154 @@
+Totally fine — we can keep the original plan and just unblock this SFT run.
+
+The ONLY problem right now is this bit:
+
+```text
+if "text" in example and not example["text"].endswith(eos_token):
+AttributeError: 'list' object has no attribute 'endswith'
+```
+
+TRL thinks `example["text"]` is a **string**, but your formatting function is giving it a **list of strings**. And `add_eos_token=True` makes TRL call `.endswith()` on that list → boom.
+
+Let’s fix that with the *smallest possible change* so the plan stays the same.
+
+---
+
+## 1. Make SFTTrainer treat our data as “formatted”, not raw `text`
+
+From your repo root on the H100 box:
+
+```bash
+cd ~/looper-math-platinum-8b
+source .venv/bin/activate
+nano src/baseline_sft/train_sft_abel.py
+```
+
+Find the place where `SFTTrainer` is created. It currently looks roughly like this (you already removed `max_seq_length`):
+
+```python
+trainer = SFTTrainer(
+    model=model,
+    tokenizer=tokenizer,
+    train_dataset=train_ds,
+    args=sft_config,
+    formatting_func=format_gsm8k_abel,  # name may differ
+    # maybe dataset_text_field="text" is still here
+)
+```
+
+Change it to:
+
+```python
+trainer = SFTTrainer(
+    model=model,
+    tokenizer=tokenizer,
+    train_dataset=train_ds,
+    args=sft_config,
+    formatting_func=format_gsm8k_abel,  # our function constructs the text
+    dataset_text_field=None,            # tell TRL "don't look for raw 'text' column"
+    add_eos_token=False,                # don't call .endswith() internally
+)
+```
+
+Key points:
+
+* `dataset_text_field=None` → TRL won’t assume there’s a simple string column called `"text"`.
+* `add_eos_token=False` → avoids the internal `example["text"].endswith(...)` path that is crashing.
+
+Save & exit:
+
+* `Ctrl + O`, `Enter`
+* `Ctrl + X`
+
+---
+
+## 2. Make sure your formatting function returns a single string
+
+In the same file, look for your formatting function, something like:
+
+```python
+def format_gsm8k_abel(example):
+    # ...
+    return {"text": parts}
+```
+
+Right now, `parts` is probably a list. We want to turn it into one string (still exactly the same content, just joined), and we’ll add EOS ourselves.
+
+Example fix:
+
+```python
+def format_gsm8k_abel(example):
+    question = example["question"]
+    answer = example["answer"]  # Abel-style final answer + reasoning
+
+    # Build one single text string
+    text = (
+        "You are a careful math tutor. Solve the problem step by step, "
+        "then end with '#### final_answer'.\n\n"
+        f"Problem:\n{question}\n\n"
+        f"Solution:\n{answer}"
+    )
+
+    # Safely append EOS
+    eos = tokenizer.eos_token or ""
+    if eos and not text.endswith(eos):
+        text = text + eos
+
+    return {"text": text}
+```
+
+If your function *currently* returns a list like `texts = [...]`, just do:
+
+```python
+def format_gsm8k_abel(example):
+    texts = [...]  # however you were building it
+
+    # Flatten to one string
+    text = "\n\n".join(texts)
+
+    eos = tokenizer.eos_token or ""
+    if eos and not text.endswith(eos):
+        text = text + eos
+
+    return {"text": text}
+```
+
+The exact wording of the prompt doesn’t matter; what matters is:
+
+* `example["text"]` is a **string**, not a list
+* it already ends with EOS, so turning off `add_eos_token` is safe
+
+We are **not** changing the overall training plan, just making the data shape match what TRL expects.
+
+---
+
+## 3. Re-run the Abel SFT job (same command as before)
+
+Now re-launch training exactly the same way:
+
+```bash
+cd ~/looper-math-platinum-8b
+source .venv/bin/activate
+
+accelerate launch src/baseline_sft/train_sft_abel.py
+```
+
+What you should see:
+
+* Header: `Abel-7B-002 SFT Training with LoRA`
+* `Loaded 7473 training examples`
+* `Loading tokenizer from GAIR/Abel-7B-002...`
+* `Loading Abel base model in bf16...`
+* `Applying formatting function to train dataset: 7473/7473`
+* **No** “Adding EOS to train dataset…” crash
+* Then actual training logs (`loss`, etc.) across ranks
+
+When it finishes, you’ll get your Abel-LoRA SFT checkpoint in whatever `OUTPUT_DIR` the script uses (e.g. `checkpoints/abel_sft_lora`).
+
+From there we can keep the rest of the original plan:
+
+* correctness-only RL/DPO on top of this SFT Abel checkpoint
+* then later, coherence-style SFT if we decide we need it
+* Platinum evals using the same script structure you already had
+
+Run those two edits + relaunch, and paste the *next* error or the first training logs, and we’ll keep marching.
