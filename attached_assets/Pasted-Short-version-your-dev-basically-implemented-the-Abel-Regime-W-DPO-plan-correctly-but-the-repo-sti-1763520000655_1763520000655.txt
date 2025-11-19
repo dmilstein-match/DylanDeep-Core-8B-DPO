@@ -1,0 +1,341 @@
+Short version: your dev basically implemented the Abel+Regime-W+DPO plan correctly, but the repo still has a bunch of DeepSeek-era scripts that can quietly confuse you, and there are a few subtle consistency + ergonomics issues that are worth fixing now.
+
+I’ll break it into:
+
+1. What looks solid
+2. Things that can *actually* break or mislead you
+3. Concrete cleanup / next steps for your dev
+
+---
+
+## 1️⃣ What looks solid
+
+**Pipeline structure matches the new plan**
+
+* `src/baseline_sft/train_sft_abel.py`
+
+  * Uses `BASE_MODEL = "GAIR/Abel-7B-002"`
+  * Writes to `checkpoints/abel_sft_lora`
+  * LoRA config + SFTTrainer setup looks standard and H100-friendly (bf16, grad accumulation, max_seq_length, etc.).
+* `src/rl_training/collect_rollouts_abel.py`
+
+  * Loads Abel + `abel_sft_lora` and uses `build_all_arms()` from `src.regime_w.arms`.
+  * Generates one trajectory per arm, extracts answers, and then calls `compute_rewards_for_question`.
+  * **Important:** it explicitly computes `is_correct` via normalized predicted vs normalized gold answer and stores:
+
+    * `full_text`, `answer`, `reasoning`, `num_tokens`, `reward`, `correct`
+      into each trajectory. That’s exactly what `build_preferences_abel.py` expects.
+* `src/rl_training/build_preferences_abel.py`
+
+  * Implements the **correctness-first, coherence-second** logic exactly as we discussed:
+
+    * Strategy 1: pairs (correct vs incorrect) tagged as `"pair_type": "correctness"`.
+    * Strategy 2: among correct-only trajectories, sorts by `reward` and adds a `"coherence"` pair only if `best.reward > worst.reward + 0.1`.
+* `src/rl_training/train_dpo_coherence.py`
+
+  * Loads Abel base in bf16, then attaches SFT LoRA as the starting policy.
+  * Loads a separate frozen Abel+SFT reference model.
+  * Loads `data/abel_coherence_preferences.jsonl`, maps it to `{prompt, chosen, rejected}` using your math-tutor prompt.
+  * Configures DPO with bf16 when available, otherwise fp16, reasonable LR and batch/grad_accum.
+* **Regime-W reward implementation** (`src/regime_w/reward.py`)
+
+  * `Trajectory` dataclass is clean.
+  * `compute_rewards_for_question`:
+
+    * Computes correctness flags via normalized answer match.
+    * Computes `s_end`, `s_path`, `s_cf`, and `s_wm` then combines:
+
+      * `base = ALPHA_CORRECT * correct`
+      * `coherence_term = BETA_COHERENCE * s_wm`
+      * length penalty over `LENGTH_PENALTY_THRESHOLD`
+      * optional `FULL_AGREEMENT_BONUS` when all correct and agreement is high.
+    * Returns per-trajectory rewards that your rollout collector then logs.
+* **Abel Platinum evals**
+
+  * `src/eval/eval_abel_sft_platinum.py`
+  * `src/eval/eval_abel_coherence_platinum.py`
+    Both:
+  * Use `madrylab/gsm8k-platinum` (`split="test"`).
+  * Fully log per-example JSONL with extracted/normalized answers + correctness flag.
+  * Implement resume logic: they read `OUT_PATH`, keep only valid JSON lines, recompute `correct_so_far`, and continue from `start_index`.
+  * Use the same math-tutor style prompt as training and rollouts.
+
+**Legacy segregation**
+
+* `src/legacy/` contains the DeepSeek scripts: SFT, rollouts, preferences, DPO, and evaluation. That’s exactly in the spirit of “archive but keep IP”.
+
+**Arm definitions**
+
+* `src/regime_w/arms.py` is simple and consistent:
+
+  * `ArmSpec(name, system_prompt, temp, top_p)`
+  * Wolfram-style and Maudlin-style arms; nothing DeepSeek-specific hardcoded.
+
+Overall: the Abel coherence stack (SFT → rollouts → prefs → DPO → Platinum eval) is there and wired correctly.
+
+---
+
+## 2️⃣ Things that can *actually* bite you
+
+### A. Old DeepSeek eval scripts still “live” and look current
+
+You currently have both:
+
+* **New Abel eval entrypoints**:
+
+  * `src/eval/eval_abel_sft_platinum.py`
+  * `src/eval/eval_abel_coherence_platinum.py`
+
+**and**
+
+* **Old DeepSeek scripts still in `src/eval/` (not in `legacy/`)**:
+
+  * `eval_platinum.py` — uses DeepSeek base, GSM8K test from `data/gsm8k_test.jsonl`, and DeepSeek LoRAs (`checkpoints/sft_lora`, `checkpoints/lora_rl`).
+  * `eval_sft_platinum.py` — Platinum eval **but for DeepSeek**, not Abel (`deepseek-ai/DeepSeek-R1-Distill-Llama-8B`, `checkpoints/sft_lora`).
+  * `eval_rl_platinum.py` — RL/Platinum eval, also DeepSeek-based.
+  * `eval_gsm8k_dev.py` — dev-set evaluation for DeepSeek base + `sft_lora`.
+
+**Risk:** it’s very easy to accidentally run the wrong script:
+
+```bash
+# This is OLD / DeepSeek:
+python -m src.eval.eval_sft_platinum
+python -m src.eval.eval_platinum
+python -m src.eval.eval_rl_platinum
+
+# These are the NEW ones you actually want:
+python -m src.eval.eval_abel_sft_platinum
+python -m src.eval.eval_abel_coherence_platinum
+```
+
+If you mix them up, you’ll end up comparing Abel results in your head to DeepSeek JSONLs on disk and misreading your own performance.
+
+👉 **Suggestion:** move all the DeepSeek eval scripts into `src/legacy/` or rename them clearly:
+
+* `eval_platinum.py` → `legacy_eval_platinum_deepseek.py`
+* `eval_sft_platinum.py` → `legacy_eval_sft_platinum_deepseek.py`
+* `eval_rl_platinum.py` → same
+* `eval_gsm8k_dev.py` → `legacy_eval_gsm8k_dev_deepseek.py`
+
+…and update any README text to only mention the Abel evals.
+
+---
+
+### B. README is lying to you (still DeepSeek + PPO)
+
+Current `README.md` still says:
+
+* Project is for **DeepSeek-R1-Distill-Llama-8B**
+* Talks about **PPO RL**, baseline SFT, etc.
+* Mentions a PPO pipeline that’s no longer the plan.
+
+If you or a collaborator comes back in two weeks, they’ll read the README and think the primary pipeline is “DeepSeek + PPO”, not “Abel + Regime-W + coherence DPO on Platinum”.
+
+👉 This won’t cause runtime errors, but it will absolutely **cause bad decisions** (wrong script, wrong model, wrong expectations).
+
+You should:
+
+* Update the top of the README to:
+
+  * Say **“Abel-7B-002 base + LoRA SFT + Regime-W coherence DPO”**.
+  * Clearly mark DeepSeek/PPO as **legacy experiments**.
+* Document the *actual* main commands:
+
+  * `python -m src.baseline_sft.train_sft_abel`
+  * `python -m src.rl_training.collect_rollouts_abel`
+  * `python -m src.rl_training.build_preferences_abel`
+  * `python -m src.rl_training.train_dpo_coherence`
+  * `python -m src.eval.eval_abel_sft_platinum`
+  * `python -m src.eval.eval_abel_coherence_platinum`
+
+---
+
+### C. Answer normalization is slightly inconsistent across modules
+
+You’ve got multiple versions of “normalize / extract answer”:
+
+* `src/regime_w/reward.py`:
+
+  * `normalize_answer()` is very simple (lowercase & strip).
+* `collect_rollouts_abel.py`:
+
+  * Uses `normalize_answer` and `extract_answer` imported from `regime_w.reward`.
+* Eval scripts:
+
+  * `eval_abel_*_platinum.py` define their own `normalize_answer` that:
+
+    * Lowercases
+    * Strips commas
+    * Normalizes numeric strings like `42.0 → 42`.
+  * Their `extract_answer` tends to prioritize the number after `####` and then fallback to last number.
+
+**Implication:**
+
+* The **eval correctness** is slightly more forgiving / numerically aware than the **reward’s correctness** (since reward’s `normalize_answer` doesn’t remove commas or normalize decimals).
+
+That won’t “break” anything, but it means:
+
+* A trajectory could be treated as *incorrect* in reward computation (if formatting is odd) while being counted as *correct* in the final eval scripts, or vice versa.
+
+👉 **Low lift improvement:** centralize `extract_answer` + `normalize_answer` in one module (probably `src/common/answer_utils.py`) and import it everywhere:
+
+* `regime_w.reward`
+* `collect_rollouts_abel.py`
+* all eval scripts
+
+That keeps “what counts as the same answer” perfectly aligned between reward, preference building, and accuracy measurement.
+
+---
+
+### D. DPO dataset mapping: extra columns
+
+In `train_dpo_coherence.py`:
+
+* You load the JSONL preferences (with keys `question`, `gold_answer`, `chosen`, `rejected`, `chosen_reward`, `rejected_reward`, `pair_type`).
+* You then:
+
+  * Map to `prompt = build_prompt(question)`.
+  * `remove_columns = [question, gold_answer, chosen_reward, rejected_reward, pair_type if present]`.
+
+That leaves dataset columns `{prompt, chosen, rejected}` plus possibly any other stray columns if you ever extend the schema.
+
+TRL’s `DPOTrainer` is fine as long as those three exist; extra columns are usually ignored. So this won’t crash, but:
+
+👉 If you later add more metadata (e.g., `difficulty`, `bucket`), it will silently flow into the dataset. Safer to assert:
+
+```python
+dataset = dataset.map(
+    format_dataset,
+    batched=True,
+    remove_columns=[c for c in dataset.column_names if c not in ["prompt", "chosen", "rejected"]],
+)
+```
+
+Just to keep it bulletproof.
+
+---
+
+### E. GPU / dtype assumptions
+
+* `train_sft_abel.py` (from what I saw) and `train_dpo_coherence.py` assume **bf16** (H100/A100-style).
+* On your Lambda H100 this is perfect. On a random consumer GPU, it will explode.
+
+Not an issue for you right now, but keep in mind if you ever run this on a different machine, you’ll want the same kind of `use_bf16 = torch.cuda.is_bf16_supported()` pattern in SFT that you already use in DPO.
+
+---
+
+### F. Rollout size: N_SAMPLES = 500
+
+In `collect_rollouts_abel.py`:
+
+```python
+N_SAMPLES = 500
+dataset = dataset[:N_SAMPLES]
+```
+
+That’s fine for a first run, but:
+
+* With, say, ~8 arms, you only end up with ~4000–5000 total trajectories and a modest number of preference pairs.
+* For a leaderboard-aiming coherence DPO, you’ll probably want to:
+
+  * Either bump `N_SAMPLES` substantially (e.g., 3–5k) once everything’s stable.
+  * Or make it a CLI arg so you can easily rerun with more data.
+
+Not a bug, just a “don’t forget this knob” call-out.
+
+---
+
+### G. Leftover generic DeepSeek pipeline in `src/eval/eval_platinum.py`
+
+`eval_platinum.py` is still set up for:
+
+* `TEST_PATH = "data/gsm8k_test.jsonl"`
+* DeepSeek base + LoRAs `checkpoints/sft_lora` and `checkpoints/lora_rl`
+
+If you ever absent-mindedly run:
+
+```bash
+python -m src.eval.eval_platinum
+```
+
+you’ll:
+
+* Evaluate DeepSeek on your old GSM8K split, not Abel on Platinum.
+* Possibly overwrite logs in `outputs/` in a way that makes result comparisons messy.
+
+👉 Again, best to move this into `legacy/` or rename it to make it obviously “old”.
+
+---
+
+## 3️⃣ Concrete “fix it” checklist for your dev
+
+Here’s exactly what I’d tell them to do next:
+
+1. **Quarantine DeepSeek scripts**
+
+   * Move or rename:
+
+     * `src/eval/eval_platinum.py`
+     * `src/eval/eval_sft_platinum.py`
+     * `src/eval/eval_rl_platinum.py`
+     * `src/eval/eval_gsm8k_dev.py`
+   * Example: move them all into `src/legacy/` and adjust imports if needed.
+
+2. **Update the README**
+
+   * Change the project description to:
+
+     * Abel-7B-002 base model.
+     * SFT with LoRA on GSM8K train.
+     * Regime-W rollouts + correctness/coherence preferences.
+     * DPO coherence head.
+     * Evaluation on `madrylab/gsm8k-platinum` (test only; no training).
+   * Add a **“Main pipeline commands”** section with the exact Python invocations you want to standardize.
+
+3. **Unify answer extraction / normalization**
+
+   * Create `src/common/answers.py` (name it whatever you like) with:
+
+     * `extract_answer(text: str) -> str`
+     * `normalize_answer(ans: str) -> str` (including comma removal & numeric normalization)
+   * Import these everywhere:
+
+     * `regime_w.reward`
+     * `collect_rollouts_abel.py`
+     * all `eval_abel_*_platinum.py` and any other eval script you actually use.
+
+4. **Make DPO dataset mapping ultra explicit**
+
+   * In `train_dpo_coherence.py`, change to something like:
+
+     ```python
+     def format_dataset(examples):
+         return {
+             "prompt": [build_prompt(q) for q in examples["question"]],
+             "chosen": examples["chosen"],
+             "rejected": examples["rejected"],
+         }
+
+     dataset = dataset.map(
+         format_dataset,
+         batched=True,
+         remove_columns=[c for c in dataset.column_names if c not in ["prompt", "chosen", "rejected"]],
+     )
+     ```
+
+5. **Expose N_SAMPLES as a parameter**
+
+   * Either:
+
+     * Add `argparse` to `collect_rollouts_abel.py`, or
+     * At least put a big comment: “Bump N_SAMPLES once pipeline is validated.”
+
+6. **Optional: align SFT dtype logic with DPO**
+
+   * In `train_sft_abel.py`, mirror the `use_bf16` pattern you use in DPO for future-proofing.
+
+---
+
+If you want, next we can:
+
+* Design a single `run_experiment.sh` (or Python `cli.py`) that runs the whole Abel pipeline end-to-end with one command, so you never accidentally touch the DeepSeek stuff again.
