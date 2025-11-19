@@ -1,0 +1,114 @@
+============================================================
+(.venv) ubuntu@192-222-54-90:~/looper-math-platinum-8b$ TORCH_DISTRIBUTED_DEBUG=DETAIL accelerate launch --config_file .accelerate_config.yaml src/baseline_sft/train_sft_abel.py
+⚠️  GRADIENT CHECKPOINTING FORCEFULLY DISABLED AT PYTORCH LEVEL
+================================================================================
+Abel-7B-002 SFT Training with LoRA
+================================================================================
+
+Loading GSM8K training data from data/gsm8k_train.jsonl...
+⚠️  GRADIENT CHECKPOINTING FORCEFULLY DISABLED AT PYTORCH LEVEL
+================================================================================
+Abel-7B-002 SFT Training with LoRA
+================================================================================
+
+Loading GSM8K training data from data/gsm8k_train.jsonl...
+⚠️  GRADIENT CHECKPOINTING FORCEFULLY DISABLED AT PYTORCH LEVEL
+================================================================================
+Abel-7B-002 SFT Training with LoRA
+================================================================================
+
+Loading GSM8K training data from data/gsm8k_train.jsonl...
+⚠️  GRADIENT CHECKPOINTING FORCEFULLY DISABLED AT PYTORCH LEVEL
+================================================================================
+Abel-7B-002 SFT Training with LoRA
+================================================================================
+
+Loading GSM8K training data from data/gsm8k_train.jsonl...
+⚠️  GRADIENT CHECKPOINTING FORCEFULLY DISABLED AT PYTORCH LEVEL
+================================================================================
+Abel-7B-002 SFT Training with LoRA
+================================================================================
+
+Loading GSM8K training data from data/gsm8k_train.jsonl...
+⚠️  GRADIENT CHECKPOINTING FORCEFULLY DISABLED AT PYTORCH LEVEL
+================================================================================
+Abel-7B-002 SFT Training with LoRA
+================================================================================
+
+Loading GSM8K training data from data/gsm8k_train.jsonl...
+⚠️  GRADIENT CHECKPOINTING FORCEFULLY DISABLED AT PYTORCH LEVEL
+================================================================================
+Abel-7B-002 SFT Training with LoRA
+================================================================================
+
+Loading GSM8K training data from data/gsm8k_train.jsonl...
+⚠️  GRADIENT CHECKPOINTING FORCEFULLY DISABLED AT PYTORCH LEVEL
+================================================================================
+Abel-7B-002 SFT Training with LoRA
+================================================================================
+
+Loading GSM8K training data from data/gsm8k_train.jsonl...
+Loaded 7473 training examples
+
+Loading tokenizer from GAIR/Abel-7B-002...
+Loaded 7473 training examples
+
+Loading tokenizer from GAIR/Abel-7B-002...
+Loaded 7473 training examples
+
+Loading tokenizer from GAIR/Abel-7B-002...
+Loaded 7473 training examples
+
+Loading tokenizer from GAIR/Abel-7B-002...
+Loaded 7473 training examples
+
+Loading tokenizer from GAIR/Abel-7B-002...
+Loaded 7473 training examples
+
+Loading tokenizer from GAIR/Abel-7B-002...
+Loaded 7473 training examples
+
+Loading tokenizer from GAIR/Abel-7B-002...
+Loaded 7473 training examples
+
+Loading tokenizer from GAIR/Abel-7B-002...
+Loading Abel base model in bf16...
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading Abel base model in bf16...
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading checkpoint shards:   0%|                                                                  | 0/3 [00:00<?, ?it/s]Loading Abel base model in bf16...
+Loading Abel base model in bf16...
+`torch_dtype` is deprecated! Use `dtype` instead!
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading Abel base model in bf16...
+Loading Abel base model in bf16...
+Loading Abel base model in bf16...
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading checkpoint shards:   0%|                                                                  | 0/3 [00:00<?, ?it/s]Loading Abel base model in bf16...
+`torch_dtype` is deprecated! Use `dtype` instead!
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading checkpoint shards:   0%|                                                                  | 0/3 [00:00<?, ?it/s]`torch_dtype` is deprecated! Use `dtype` instead!
+Loading checkpoint shards: 100%|██████████████████████████████████████████████████████████| 3/3 [00:09<00:00,  3.11s/it]
+Disabling gradient checkpointing for DDP compatibility...
+Loading checkpoint shards: 100%|██████████████████████████████████████████████████████████| 3/3 [00:09<00:00,  3.19s/it]
+Disabling gradient checkpointing for DDP compatibility...
+Loading checkpoint shards: 100%|██████████████████████████████████████████████████████████| 3/3 [00:09<00:00,  3.21s/it]
+Disabling gradient checkpointing for DDP compatibility...
+Loading checkpoint shards: 100%|██████████████████████████████████████████████████████████| 3/3 [00:10<00:00,  3.35s/it]
+Loading checkpoint shards: 100%|██████████████████████████████████████████████████████████| 3/3 [00:10<00:00,  3.38s/it]
+Loading checkpoint shards: 100%|██████████████████████████████████████████████████████████| 3/3 [00:10<00:00,  3.33s/it]
+Disabling gradient checkpointing for DDP compatibility...
+Loading checkpoint shards: 100%|██████████████████████████████████████████████████████████| 3/3 [00:10<00:00,  3.37s/it]
+Disabling gradient checkpointing for DDP compatibility...
+Disabling gradient checkpointing for DDP compatibility...
+Disabling gradient checkpointing for DDP compatibility...
+Loading checkpoint shards: 100%|██████████████████████████████████████████████████████████| 3/3 [00:10<00:00,  3.45s/it]
+Disabling gradient checkpointing for DDP compatibility...
+[Gloo] Rank 1 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7
+[Gloo] Rank 0 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7
+[Gloo] Rank 2 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7
+[Gloo] Rank 3 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7[Gloo] Rank 4 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7
+[Gloo] Rank 5 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7
+[Gloo] Rank 7 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7
+[Gloo] Rank 6 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7
+

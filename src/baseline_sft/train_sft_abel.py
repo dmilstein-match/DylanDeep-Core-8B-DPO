@@ -101,11 +101,11 @@ def main():
     if hasattr(model.config, 'use_cache'):
         model.config.use_cache = True  # Re-enable KV cache
 
-    # LoRA configuration (expanded to include MLP layers)
+    # LoRA configuration (attention layers only - MLP layers cause DDP conflicts)
     lora_config = LoraConfig(
         r=16,
         lora_alpha=32,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",
