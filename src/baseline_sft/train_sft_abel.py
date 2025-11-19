@@ -9,6 +9,15 @@ from datasets import load_dataset
 from trl import SFTTrainer, SFTConfig
 from peft import LoraConfig
 
+# CRITICAL: Force disable gradient checkpointing at PyTorch level (nuclear option)
+# Abel-7B has gradient checkpointing hardcoded in its architecture which conflicts with DDP + LoRA
+def _no_checkpoint(func, *args, **kwargs):
+    """Override gradient checkpointing to be a no-op - just run the function normally"""
+    return func(*args, **kwargs)
+
+torch.utils.checkpoint.checkpoint = _no_checkpoint
+print("⚠️  GRADIENT CHECKPOINTING FORCEFULLY DISABLED AT PYTORCH LEVEL")
+
 # H100 optimization flags
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
