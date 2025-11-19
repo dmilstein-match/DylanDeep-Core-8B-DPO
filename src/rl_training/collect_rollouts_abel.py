@@ -1,3 +1,4 @@
+import argparse
 import json
 from typing import List, Dict
 
@@ -8,13 +9,6 @@ from peft import PeftModel
 from src.regime_w.arms import build_all_arms
 from src.regime_w.reward import Trajectory, compute_rewards_for_question
 from src.common.answer_utils import extract_answer, normalize_answer
-
-
-DATA_PATH = "data/gsm8k_train.jsonl"
-BASE_MODEL = "GAIR/Abel-7B-002"
-SFT_PATH = "checkpoints/abel_sft_lora"
-OUT_PATH = "data/abel_regime_w_rollouts.jsonl"
-N_SAMPLES = 500
 
 
 def load_gsm8k(path: str) -> List[Dict]:
@@ -36,33 +30,74 @@ def build_prompt(question: str, system_prompt: str) -> str:
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        description="Collect Regime W rollouts from Abel SFT model"
+    )
+    parser.add_argument(
+        "--data_path",
+        type=str,
+        default="data/gsm8k_train.jsonl",
+        help="Path to GSM8K training data JSONL file",
+    )
+    parser.add_argument(
+        "--sft_path",
+        type=str,
+        default="checkpoints/abel_sft_lora",
+        help="Path to Abel SFT LoRA checkpoint",
+    )
+    parser.add_argument(
+        "--out_path",
+        type=str,
+        default="data/abel_regime_w_rollouts.jsonl",
+        help="Output path for rollout JSONL file",
+    )
+    parser.add_argument(
+        "--n_samples",
+        type=int,
+        default=500,
+        help="Number of training examples to process (default: 500)",
+    )
+    parser.add_argument(
+        "--base_model",
+        type=str,
+        default="GAIR/Abel-7B-002",
+        help="Base model identifier",
+    )
+    args = parser.parse_args()
+
     print("=" * 80)
     print("Abel Regime W Rollout Collection")
     print("=" * 80)
+    print(f"\nConfiguration:")
+    print(f"  Base model: {args.base_model}")
+    print(f"  SFT checkpoint: {args.sft_path}")
+    print(f"  Data path: {args.data_path}")
+    print(f"  Output path: {args.out_path}")
+    print(f"  N samples: {args.n_samples}")
     
     # Load training data
-    print(f"\nLoading GSM8K training data from {DATA_PATH}...")
-    dataset = load_gsm8k(DATA_PATH)
-    dataset = dataset[:N_SAMPLES]
+    print(f"\nLoading GSM8K training data from {args.data_path}...")
+    dataset = load_gsm8k(args.data_path)
+    dataset = dataset[:args.n_samples]
     print(f"Using {len(dataset)} examples for Regime W rollout collection\n")
 
     # Load tokenizer
-    print(f"Loading tokenizer from {BASE_MODEL}...")
-    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
+    print(f"Loading tokenizer from {args.base_model}...")
+    tokenizer = AutoTokenizer.from_pretrained(args.base_model)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     # Load Abel base model
     print(f"Loading Abel base model in bf16...")
     base_model = AutoModelForCausalLM.from_pretrained(
-        BASE_MODEL,
+        args.base_model,
         device_map="auto",
         torch_dtype=torch.bfloat16,
     )
 
     # Load SFT LoRA adapter
-    print(f"Loading Abel SFT LoRA adapter from {SFT_PATH}...")
-    model = PeftModel.from_pretrained(base_model, SFT_PATH)
+    print(f"Loading Abel SFT LoRA adapter from {args.sft_path}...")
+    model = PeftModel.from_pretrained(base_model, args.sft_path)
     model.eval()
 
     # Build Regime W arms
@@ -72,7 +107,7 @@ def main():
     print("Starting rollout collection...")
     print(f"Generating {len(arms)} trajectories per question\n")
 
-    with open(OUT_PATH, "w", encoding="utf-8") as out_f:
+    with open(args.out_path, "w", encoding="utf-8") as out_f:
         for idx, ex in enumerate(dataset):
             q = ex["question"]
             gold = ex["answer"]
@@ -140,7 +175,7 @@ def main():
 
     print(f"\n{'=' * 80}")
     print(f"Rollout collection complete!")
-    print(f"Saved Abel Regime W rollouts to: {OUT_PATH}")
+    print(f"Saved Abel Regime W rollouts to: {args.out_path}")
     print(f"Total rollouts: {len(dataset)}")
     print(f"Trajectories per rollout: {len(arms)}")
     print(f"{'=' * 80}")
