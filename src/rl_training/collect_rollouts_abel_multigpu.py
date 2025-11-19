@@ -297,11 +297,21 @@ def main():
     for w in workers:
         w.join()
 
+    # Validate output file
+    import os
+    file_size_mb = os.path.getsize(args.out_path) / (1024 * 1024)
+    record_count = sum(1 for _ in open(args.out_path, "r"))
+
     print(f"\n{'=' * 80}")
     print(f"Rollout collection complete!")
     print(f"Saved Abel Regime W rollouts to: {args.out_path}")
     print(f"Total rollouts: {len(dataset)}")
     print(f"Trajectories per rollout: {len(arms)}")
+    print(f"\nFile validation:")
+    print(f"  Size: {file_size_mb:.2f} MB")
+    print(f"  Records: {record_count}")
+    print(f"\nTo download this file:")
+    print(f"  scp ubuntu@<lambda-ip>:~/looper-math-platinum-8b/{args.out_path} .")
     print(f"{'=' * 80}\n")
 
 
