@@ -11,7 +11,7 @@ torch.backends.cuda.enable_flash_sdp(True)
 torch.backends.cuda.enable_mem_efficient_sdp(True)
 
 BASE_MODEL = "GAIR/Abel-7B-002"
-PPO_PATH = "checkpoints/abel_ppo_lora"
+SFT_PATH = "checkpoints/abel_sft_lora"
 PREFERENCES_PATH = "data/abel_coherence_preferences.jsonl"
 DPO_OUTPUT_DIR = "checkpoints/abel_dpo_coherence_lora"
 
@@ -51,22 +51,22 @@ def main():
     print("Enabling non-reentrant gradient checkpointing for LoRA + DDP compatibility...")
     base_model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
 
-    # Load PPO LoRA as starting point for policy model
-    print(f"Loading Abel PPO LoRA adapter from {PPO_PATH}...")
-    policy_model = PeftModel.from_pretrained(base_model, PPO_PATH)
+    # Load SFT LoRA as starting point for policy model
+    print(f"Loading Abel SFT LoRA adapter from {SFT_PATH}...")
+    policy_model = PeftModel.from_pretrained(base_model, SFT_PATH)
     policy_model.tokenizer = tokenizer
     
     # Re-enable non-reentrant gradient checkpointing for PEFT model (required for H100 memory efficiency)
     policy_model.enable_input_require_grads()
     policy_model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
 
-    # Create separate reference model (frozen PPO) with same dtype
-    print(f"Loading separate reference model (frozen Abel + PPO LoRA) in {dtype_name}...")
+    # Create separate reference model (frozen SFT) with same dtype
+    print(f"Loading separate reference model (frozen Abel + SFT LoRA) in {dtype_name}...")
     ref_base = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
         torch_dtype=dtype,
     )
-    ref_model = PeftModel.from_pretrained(ref_base, PPO_PATH)
+    ref_model = PeftModel.from_pretrained(ref_base, SFT_PATH)
     ref_model.eval()
     ref_model.tokenizer = tokenizer
     for param in ref_model.parameters():

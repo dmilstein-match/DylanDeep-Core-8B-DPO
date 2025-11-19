@@ -49,7 +49,7 @@ def gpu_worker(
     Args:
         gpu_id: GPU device ID (0-7)
         base_model_path: Path to GAIR/Abel-7B-002 base model
-        lora_path: Path to PPO LoRA adapter checkpoint
+        lora_path: Path to SFT LoRA adapter checkpoint
         questions_queue: Queue of (idx, question, gold_answer) tuples
         results_queue: Queue for results
     """
@@ -177,8 +177,8 @@ def main():
     parser.add_argument(
         "--lora_path",
         type=str,
-        default="checkpoints/abel_ppo_lora",
-        help="Path to PPO LoRA adapter checkpoint",
+        default="checkpoints/abel_sft_lora",
+        help="Path to SFT LoRA adapter checkpoint",
     )
     parser.add_argument(
         "--out_path",
