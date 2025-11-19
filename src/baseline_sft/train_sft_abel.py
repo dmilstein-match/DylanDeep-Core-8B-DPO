@@ -38,22 +38,17 @@ def load_gsm8k(path: str) -> List[TrainExample]:
     return data
 
 
-def formatting_func(examples, tokenizer):
-    """Format examples as tutoring-style prompts with step-by-step solutions."""
-    texts = []
-    eos = tokenizer.eos_token or ""
+def formatting_func(example):
+    """Format single example as tutoring-style prompt with step-by-step solution."""
+    q = example["question"]
+    a = example["answer"]
     
-    for q, a in zip(examples["question"], examples["answer"]):
-        prompt = (
-            "You are a careful math tutor. Solve the problem step-by-step, "
-            "then give the final answer in the format '#### 42'.\n\n"
-            f"Problem:\n{q}\n\nSolution:\n{a}"
-        )
-        # Add EOS token if not already present
-        if eos and not prompt.endswith(eos):
-            prompt = prompt + eos
-        texts.append(prompt)
-    return texts
+    prompt = (
+        "You are a careful math tutor. Solve the problem step-by-step, "
+        "then give the final answer in the format '#### 42'.\n\n"
+        f"Problem:\n{q}\n\nSolution:\n{a}"
+    )
+    return prompt
 
 
 def main():
@@ -118,7 +113,7 @@ def main():
         processing_class=tokenizer,
         peft_config=lora_config,
         train_dataset=dataset,
-        formatting_func=lambda examples: formatting_func(examples, tokenizer),
+        formatting_func=formatting_func,
         args=sft_config,
     )
 

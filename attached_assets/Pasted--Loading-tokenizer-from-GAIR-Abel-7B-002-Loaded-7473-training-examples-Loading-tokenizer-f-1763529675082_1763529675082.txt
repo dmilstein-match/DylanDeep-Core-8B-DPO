@@ -1,0 +1,101 @@
+
+
+Loading tokenizer from GAIR/Abel-7B-002...
+Loaded 7473 training examples
+
+Loading tokenizer from GAIR/Abel-7B-002...
+Loaded 7473 training examples
+
+Loading tokenizer from GAIR/Abel-7B-002...
+Loaded 7473 training examples
+
+Loading tokenizer from GAIR/Abel-7B-002...
+Loading Abel base model in bf16...
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading Abel base model in bf16...
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading Abel base model in bf16...
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading Abel base model in bf16...
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading Abel base model in bf16...
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading Abel base model in bf16...
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading Abel base model in bf16...
+Loading Abel base model in bf16...
+`torch_dtype` is deprecated! Use `dtype` instead!
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading checkpoint shards: 100%|██████████████████████████████████████████████████████████| 3/3 [00:11<00:00,  3.86s/it]
+Loading checkpoint shards: 100%|██████████████████████████████████████████████████████████| 3/3 [00:11<00:00,  3.89s/it]
+Loading checkpoint shards: 100%|██████████████████████████████████████████████████████████| 3/3 [00:12<00:00,  4.17s/it]
+Loading checkpoint shards: 100%|██████████████████████████████████████████████████████████| 3/3 [00:12<00:00,  4.22s/it]
+Loading checkpoint shards: 100%|██████████████████████████████████████████████████████████| 3/3 [00:12<00:00,  4.09s/it]
+Loading checkpoint shards: 100%|██████████████████████████████████████████████████████████| 3/3 [00:13<00:00,  4.34s/it]
+Loading checkpoint shards: 100%|██████████████████████████████████████████████████████████| 3/3 [00:13<00:00,  4.47s/it]
+Loading checkpoint shards: 100%|██████████████████████████████████████████████████████████| 3/3 [00:12<00:00,  4.31s/it]
+Applying formatting function to train dataset: 100%|███████████████████████| 7473/7473 [00:01<00:00, 6280.85 examples/s]
+Adding EOS to train dataset:   0%|                                                      | 0/7473 [00:00<?, ? examples/s]
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/home/ubuntu/looper-math-platinum-8b/src/baseline_sft/train_sft_abel.py", line 150, in <module>
+[rank0]:     main()
+[rank0]:   File "/home/ubuntu/looper-math-platinum-8b/src/baseline_sft/train_sft_abel.py", line 116, in main
+[rank0]:     trainer = SFTTrainer(
+[rank0]:   File "/home/ubuntu/looper-math-platinum-8b/.venv/lib/python3.10/site-packages/trl/trainer/sft_trainer.py", line 805, in __init__
+[rank0]:     train_dataset = self._prepare_dataset(
+[rank0]:   File "/home/ubuntu/looper-math-platinum-8b/.venv/lib/python3.10/site-packages/trl/trainer/sft_trainer.py", line 938, in _prepare_dataset
+[rank0]:     dataset = dataset.map(
+[rank0]:   File "/home/ubuntu/looper-math-platinum-8b/.venv/lib/python3.10/site-packages/datasets/arrow_dataset.py", line 562, in wrapper
+[rank0]:     out: Union["Dataset", "DatasetDict"] = func(self, *args, **kwargs)
+[rank0]:   File "/home/ubuntu/looper-math-platinum-8b/.venv/lib/python3.10/site-packages/datasets/arrow_dataset.py", line 3341, in map
+[rank0]:     for rank, done, content in Dataset._map_single(**unprocessed_kwargs):
+[rank0]:   File "/home/ubuntu/looper-math-platinum-8b/.venv/lib/python3.10/site-packages/datasets/arrow_dataset.py", line 3673, in _map_single
+[rank0]:     for i, example in iter_outputs(shard_iterable):
+[rank0]:   File "/home/ubuntu/looper-math-platinum-8b/.venv/lib/python3.10/site-packages/datasets/arrow_dataset.py", line 3647, in iter_outputs
+[rank0]:     yield i, apply_function(example, i, offset=offset)
+[rank0]:   File "/home/ubuntu/looper-math-platinum-8b/.venv/lib/python3.10/site-packages/datasets/arrow_dataset.py", line 3570, in apply_function
+[rank0]:     processed_inputs = function(*fn_args, *additional_args, **fn_kwargs)
+[rank0]:   File "/home/ubuntu/looper-math-platinum-8b/.venv/lib/python3.10/site-packages/trl/trainer/sft_trainer.py", line 932, in add_eos
+[rank0]:     if "text" in example and not example["text"].endswith(eos_token):  # language modeling case
+[rank0]: AttributeError: 'list' object has no attribute 'endswith'
+[rank0]:[W1119 05:20:36.594545632 ProcessGroupNCCL.cpp:1524] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+W1119 05:20:38.798000 22580 torch/distributed/elastic/multiprocessing/api.py:908] Sending process 22679 closing signal SIGTERM
+W1119 05:20:38.798000 22580 torch/distributed/elastic/multiprocessing/api.py:908] Sending process 22680 closing signal SIGTERM
+W1119 05:20:38.799000 22580 torch/distributed/elastic/multiprocessing/api.py:908] Sending process 22681 closing signal SIGTERM
+W1119 05:20:38.799000 22580 torch/distributed/elastic/multiprocessing/api.py:908] Sending process 22682 closing signal SIGTERM
+W1119 05:20:38.800000 22580 torch/distributed/elastic/multiprocessing/api.py:908] Sending process 22683 closing signal SIGTERM
+W1119 05:20:38.800000 22580 torch/distributed/elastic/multiprocessing/api.py:908] Sending process 22684 closing signal SIGTERM
+W1119 05:20:38.801000 22580 torch/distributed/elastic/multiprocessing/api.py:908] Sending process 22685 closing signal SIGTERM
+E1119 05:20:43.991000 22580 torch/distributed/elastic/multiprocessing/api.py:882] failed (exitcode: 1) local_rank: 0 (pid: 22678) of binary: /home/ubuntu/looper-math-platinum-8b/.venv/bin/python3
+Traceback (most recent call last):
+  File "/home/ubuntu/looper-math-platinum-8b/.venv/bin/accelerate", line 7, in <module>
+    sys.exit(main())
+  File "/home/ubuntu/looper-math-platinum-8b/.venv/lib/python3.10/site-packages/accelerate/commands/accelerate_cli.py", line 50, in main
+    args.func(args)
+  File "/home/ubuntu/looper-math-platinum-8b/.venv/lib/python3.10/site-packages/accelerate/commands/launch.py", line 1226, in launch_command
+    multi_gpu_launcher(args)
+  File "/home/ubuntu/looper-math-platinum-8b/.venv/lib/python3.10/site-packages/accelerate/commands/launch.py", line 853, in multi_gpu_launcher
+    distrib_run.run(args)
+  File "/home/ubuntu/looper-math-platinum-8b/.venv/lib/python3.10/site-packages/torch/distributed/run.py", line 927, in run
+    elastic_launch(
+  File "/home/ubuntu/looper-math-platinum-8b/.venv/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 156, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/home/ubuntu/looper-math-platinum-8b/.venv/lib/python3.10/site-packages/torch/distributed/launcher/api.py", line 293, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError:
+============================================================
+src/baseline_sft/train_sft_abel.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2025-11-19_05:20:38
+  host      : 192-222-54-90
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 22678)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+(.venv) ubuntu@192-222-54-90:~/looper-math-platinum-8b$
