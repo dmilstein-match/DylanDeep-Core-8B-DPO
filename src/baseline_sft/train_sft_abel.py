@@ -9,15 +9,6 @@ from datasets import load_dataset
 from trl import SFTTrainer, SFTConfig
 from peft import LoraConfig
 
-# CRITICAL: Force disable gradient checkpointing at PyTorch level (nuclear option)
-# Abel-7B has gradient checkpointing hardcoded in its architecture which conflicts with DDP + LoRA
-def _no_checkpoint(func, *args, **kwargs):
-    """Override gradient checkpointing to be a no-op - just run the function normally"""
-    return func(*args, **kwargs)
-
-torch.utils.checkpoint.checkpoint = _no_checkpoint
-print("⚠️  GRADIENT CHECKPOINTING FORCEFULLY DISABLED AT PYTORCH LEVEL")
-
 # H100 optimization flags
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
@@ -93,19 +84,15 @@ def main():
         trust_remote_code=True,
     )
     
-    # Explicitly disable Abel's built-in gradient checkpointing (causes DDP conflicts)
-    print("Disabling gradient checkpointing for DDP compatibility...")
-    model.config.gradient_checkpointing = False
-    if hasattr(model, 'gradient_checkpointing_disable'):
-        model.gradient_checkpointing_disable()
-    if hasattr(model.config, 'use_cache'):
-        model.config.use_cache = True  # Re-enable KV cache
+    # Enable non-reentrant gradient checkpointing (fixes LoRA + DDP conflict)
+    print("Enabling non-reentrant gradient checkpointing for LoRA + DDP compatibility...")
+    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
 
-    # LoRA configuration (attention layers only - MLP layers cause DDP conflicts)
+    # LoRA configuration (attention + MLP layers)
     lora_config = LoraConfig(
         r=16,
         lora_alpha=32,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",
@@ -126,6 +113,8 @@ def main():
         save_total_limit=3,
         optim="adamw_torch_fused",
         seed=42,
+        gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
     )
 
     # Create trainer (TRL 0.25.1 compatibility)
