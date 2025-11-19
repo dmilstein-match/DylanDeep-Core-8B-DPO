@@ -38,15 +38,20 @@ def load_gsm8k(path: str) -> List[TrainExample]:
     return data
 
 
-def formatting_func(examples):
+def formatting_func(examples, tokenizer):
     """Format examples as tutoring-style prompts with step-by-step solutions."""
     texts = []
+    eos = tokenizer.eos_token or ""
+    
     for q, a in zip(examples["question"], examples["answer"]):
         prompt = (
             "You are a careful math tutor. Solve the problem step-by-step, "
             "then give the final answer in the format '#### 42'.\n\n"
             f"Problem:\n{q}\n\nSolution:\n{a}"
         )
+        # Add EOS token if not already present
+        if eos and not prompt.endswith(eos):
+            prompt = prompt + eos
         texts.append(prompt)
     return texts
 
@@ -107,14 +112,16 @@ def main():
         save_total_limit=3,
     )
 
-    # Create trainer
+    # Create trainer (TRL 0.25.1 compatibility)
     trainer = SFTTrainer(
         model=model,
         processing_class=tokenizer,
         peft_config=lora_config,
         train_dataset=dataset,
-        formatting_func=formatting_func,
+        formatting_func=lambda examples: formatting_func(examples, tokenizer),
         args=sft_config,
+        dataset_text_field=None,
+        add_eos_token=False,
     )
 
     print("\nStarting Abel SFT (LoRA) training...\n")
