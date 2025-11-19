@@ -115,7 +115,7 @@ def main():
     # Create trainer (TRL 0.25.1 compatibility)
     trainer = SFTTrainer(
         model=model,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         peft_config=lora_config,
         train_dataset=dataset,
         formatting_func=lambda examples: formatting_func(examples, tokenizer),
