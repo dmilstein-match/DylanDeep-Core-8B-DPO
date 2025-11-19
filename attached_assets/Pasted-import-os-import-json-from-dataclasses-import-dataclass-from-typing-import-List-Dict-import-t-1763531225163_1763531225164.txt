@@ -1,0 +1,273 @@
+import os
+import json
+from dataclasses import dataclass
+from typing import List, Dict
+
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from datasets import load_dataset, Dataset
+from trl import SFTTrainer, SFTConfig
+from peft import LoraConfig
+
+# H100 optimization flags
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
+torch.backends.cuda.enable_flash_sdp(True)
+torch.backends.cuda.enable_mem_efficient_sdp(True)
+
+BASE_MODEL = "GAIR/Abel-7B-002"
+TRAIN_PATH = "data/gsm8k_train.jsonl"
+OUTPUT_DIR = "checkpoints/abel_sft_lora"
+
+
+@dataclass
+class TrainExample:
+    question: str
+    answer: str
+
+
+def load_gsm8k_manual(path: str) -> List[Dict]:
+    """Load GSM8K data manually from JSONL file."""
+    data = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            raw = json.loads(line.strip())
+            data.append({
+                "question": raw.get("question", ""),
+                "answer": raw.get("answer", ""),
+            })
+    return data
+
+
+def formatting_func(example) -> Dict[str, str]:
+    """Format single example as tutoring-style prompt with step-by-step solution.
+    
+    FIXED: Returns dict with 'text' key for SFTTrainer compatibility
+    """
+    q = example.get("question", "")
+    a = example.get("answer", "")
+    
+    # Build the complete prompt
+    prompt = (
+        "You are a careful math tutor. Solve the problem step-by-step, "
+        "then give the final answer in the format '#### 42'.\n\n"
+        f"Problem:\n{q}\n\nSolution:\n{a}"
+    )
+    
+    # FIXED: Return dict with 'text' key
+    return {"text": prompt}
+
+
+def main():
+    print("=" * 80)
+    print("Abel-7B-002 SFT Training with LoRA (DEBUGGED)")
+    print("=" * 80)
+    
+    # Check if CUDA is available
+    if not torch.cuda.is_available():
+        print("WARNING: CUDA not available. Training will be very slow on CPU.")
+    
+    # Load dataset - with error handling
+    print(f"\nLoading GSM8K training data from {TRAIN_PATH}...")
+    
+    try:
+        # Option 1: Use HuggingFace load_dataset (recommended)
+        dataset = load_dataset(
+            "json",
+            data_files={"train": TRAIN_PATH},
+            split="train",
+        )
+        print(f"Loaded {len(dataset)} training examples using load_dataset\n")
+        
+    except FileNotFoundError:
+        print(f"File not found: {TRAIN_PATH}")
+        print("Attempting to load from manual parsing or create dummy data...")
+        
+        # Option 2: Create dummy dataset for testing
+        dummy_data = [
+            {"question": "What is 2+2?", "answer": "Let me solve this step by step.\n2 + 2 = 4\n#### 4"},
+            {"question": "What is 5*3?", "answer": "Let me calculate:\n5 × 3 = 15\n#### 15"},
+        ]
+        dataset = Dataset.from_list(dummy_data)
+        print(f"Created dummy dataset with {len(dataset)} examples for testing\n")
+
+    # Load tokenizer
+    print(f"Loading tokenizer from {BASE_MODEL}...")
+    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
+    
+    # FIXED: Ensure pad token is set
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "right"  # Important for causal LM
+    
+    # Detect dtype support (bf16 for H100/A100, fp16 fallback)
+    use_bf16 = torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False
+    dtype = torch.bfloat16 if use_bf16 else torch.float16
+    dtype_name = "bfloat16" if use_bf16 else "float16"
+    
+    print(f"Loading Abel base model in {dtype_name}...")
+    try:
+        model = AutoModelForCausalLM.from_pretrained(
+            BASE_MODEL,
+            torch_dtype=dtype,
+            device_map="auto",  # FIXED: Auto device mapping for multi-GPU
+            trust_remote_code=True,  # Abel might need custom code
+        )
+    except Exception as e:
+        print(f"Error loading model: {e}")
+        print("Make sure you have access to the GAIR/Abel-7B-002 model on HuggingFace")
+        return
+
+    # Enable gradient checkpointing for memory efficiency
+    model.gradient_checkpointing_enable()
+    model.enable_input_require_grads()
+
+    # LoRA configuration - FIXED: More comprehensive target modules
+    lora_config = LoraConfig(
+        r=16,
+        lora_alpha=32,
+        target_modules=[
+            "q_proj", "k_proj", "v_proj", "o_proj",
+            "gate_proj", "up_proj", "down_proj"  # Include MLP layers
+        ],
+        lora_dropout=0.05,
+        bias="none",
+        task_type="CAUSAL_LM",
+    )
+
+    # Training configuration - FIXED: Added missing parameters
+    sft_config = SFTConfig(
+        output_dir=OUTPUT_DIR,
+        num_train_epochs=1,
+        per_device_train_batch_size=4,  # Increased for H100
+        gradient_accumulation_steps=4,  # Effective batch size = 16
+        learning_rate=2e-4,  # Slightly higher LR for LoRA
+        warmup_steps=100,  # FIXED: Added warmup
+        max_seq_length=512,  # FIXED: Set max sequence length
+        bf16=use_bf16,
+        fp16=not use_bf16 and torch.cuda.is_available(),
+        logging_steps=10,
+        save_steps=200,
+        save_total_limit=3,
+        eval_steps=None,  # No evaluation dataset
+        gradient_checkpointing=True,  # FIXED: Enable gradient checkpointing
+        optim="adamw_torch",  # FIXED: Specify optimizer
+        seed=42,  # FIXED: Set seed for reproducibility
+        report_to="none",  # FIXED: Disable wandb/tensorboard by default
+        remove_unused_columns=False,  # FIXED: Keep all columns
+        dataset_text_field="text",  # FIXED: Specify text field
+    )
+
+    # Create trainer - FIXED: Correct parameter names for TRL 0.8+
+    try:
+        # For newer TRL versions (0.8+)
+        trainer = SFTTrainer(
+            model=model,
+            tokenizer=tokenizer,  # Use tokenizer, not processing_class
+            peft_config=lora_config,
+            train_dataset=dataset,
+            formatting_func=formatting_func,
+            args=sft_config,
+            max_seq_length=sft_config.max_seq_length,
+        )
+    except TypeError:
+        # Fallback for older TRL versions
+        print("Trying alternative trainer initialization...")
+        trainer = SFTTrainer(
+            model=model,
+            processing_class=tokenizer,
+            peft_config=lora_config,
+            train_dataset=dataset,
+            formatting_func=formatting_func,
+            args=sft_config,
+        )
+
+    # Calculate and display batch size information
+    print("\nTraining Configuration:")
+    print("-" * 40)
+    per_device_batch = sft_config.per_device_train_batch_size
+    grad_accum = sft_config.gradient_accumulation_steps
+    effective_batch = per_device_batch * grad_accum
+    
+    world_size = int(os.environ.get("WORLD_SIZE", 
+                                   torch.cuda.device_count() if torch.cuda.is_available() else 1))
+    global_batch = effective_batch * world_size
+    
+    print(f"Per-device batch size: {per_device_batch}")
+    print(f"Gradient accumulation steps: {grad_accum}")
+    print(f"Effective batch size per device: {effective_batch}")
+    print(f"Number of GPUs: {world_size}")
+    print(f"Global batch size: {global_batch}")
+    print(f"Max sequence length: {sft_config.max_seq_length}")
+    print(f"Learning rate: {sft_config.learning_rate}")
+    print(f"Total training steps: ~{len(dataset) // global_batch}")
+    print("-" * 40)
+    print()
+
+    # Train
+    print("Starting Abel SFT (LoRA) training...")
+    print("This may take a while depending on dataset size and hardware.\n")
+    
+    try:
+        trainer.train()
+    except Exception as e:
+        print(f"\nTraining error occurred: {e}")
+        print("Common issues:")
+        print("1. Out of memory - reduce batch_size or max_seq_length")
+        print("2. Model access - ensure you have access to GAIR/Abel-7B-002")
+        print("3. Data format - check JSONL has 'question' and 'answer' fields")
+        return
+
+    # Save LoRA adapter and tokenizer
+    print(f"\nSaving LoRA adapter and tokenizer to {OUTPUT_DIR}...")
+    
+    # Create output directory if it doesn't exist
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    
+    # Save the model and tokenizer
+    trainer.save_model(OUTPUT_DIR)
+    tokenizer.save_pretrained(OUTPUT_DIR)
+    
+    # Save training configuration for reference
+    config_path = os.path.join(OUTPUT_DIR, "training_config.json")
+    with open(config_path, "w") as f:
+        json.dump({
+            "base_model": BASE_MODEL,
+            "lora_r": lora_config.r,
+            "lora_alpha": lora_config.lora_alpha,
+            "max_seq_length": sft_config.max_seq_length,
+            "learning_rate": sft_config.learning_rate,
+            "batch_size": global_batch,
+            "num_epochs": sft_config.num_train_epochs,
+        }, f, indent=2)
+    
+    print("=" * 80)
+    print("Abel SFT training complete!")
+    print(f"LoRA adapter saved to: {OUTPUT_DIR}")
+    print(f"Training config saved to: {config_path}")
+    print("=" * 80)
+    
+    # Print example inference code
+    print("\nTo use the fine-tuned model:")
+    print("-" * 40)
+    print(f"""
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft import PeftModel
+
+# Load base model
+model = AutoModelForCausalLM.from_pretrained("{BASE_MODEL}")
+tokenizer = AutoTokenizer.from_pretrained("{OUTPUT_DIR}")
+
+# Load LoRA weights
+model = PeftModel.from_pretrained(model, "{OUTPUT_DIR}")
+
+# Inference
+prompt = "Problem: What is 15 + 27?"
+inputs = tokenizer(prompt, return_tensors="pt")
+outputs = model.generate(**inputs, max_new_tokens=200)
+print(tokenizer.decode(outputs[0]))
+    """)
+
+
+if __name__ == "__main__":
+    main()

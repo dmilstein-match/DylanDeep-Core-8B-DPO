@@ -70,6 +70,7 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "right"  # Important for causal LM training
     
     # Detect dtype support (bf16 for H100/A100, fp16 fallback)
     use_bf16 = torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False
@@ -80,13 +81,19 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
         torch_dtype=dtype,
+        trust_remote_code=True,
+    )
+    
+    # Enable non-reentrant gradient checkpointing for DDP compatibility
+    model.gradient_checkpointing_enable(
+        gradient_checkpointing_kwargs={"use_reentrant": False}
     )
 
-    # LoRA configuration
+    # LoRA configuration (expanded to include MLP layers)
     lora_config = LoraConfig(
         r=16,
         lora_alpha=32,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",
@@ -99,11 +106,14 @@ def main():
         per_device_train_batch_size=2,
         gradient_accumulation_steps=2,
         learning_rate=5e-5,
+        warmup_steps=100,
         bf16=use_bf16,
         fp16=not use_bf16,
         logging_steps=10,
         save_steps=200,
         save_total_limit=3,
+        optim="adamw_torch_fused",
+        seed=42,
     )
 
     # Create trainer (TRL 0.25.1 compatibility)
