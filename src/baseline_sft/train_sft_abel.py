@@ -79,7 +79,6 @@ def main():
     print(f"Loading Abel base model in {dtype_name}...")
     model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
-        device_map="auto",
         torch_dtype=dtype,
     )
 
