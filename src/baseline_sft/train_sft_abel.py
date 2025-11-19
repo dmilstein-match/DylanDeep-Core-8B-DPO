@@ -83,6 +83,14 @@ def main():
         torch_dtype=dtype,
         trust_remote_code=True,
     )
+    
+    # Explicitly disable Abel's built-in gradient checkpointing (causes DDP conflicts)
+    print("Disabling gradient checkpointing for DDP compatibility...")
+    model.config.gradient_checkpointing = False
+    if hasattr(model, 'gradient_checkpointing_disable'):
+        model.gradient_checkpointing_disable()
+    if hasattr(model.config, 'use_cache'):
+        model.config.use_cache = True  # Re-enable KV cache
 
     # LoRA configuration (expanded to include MLP layers)
     lora_config = LoraConfig(
