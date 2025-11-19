@@ -1,0 +1,731 @@
+Good, this is a really clean direction:
+	•	Base model: Abel-7B-002 (already very strong on GSM8K).
+	•	Your contribution: Coherence SFT + DPO on top of it, plus a solid Platinum eval pipeline.
+	•	Constraints: No training on Platinum (it’s a test-only split), fast/batched eval, resumable runs, clean repo, IP-safe.
+
+I’ll split this into:
+	1.	What your dev needs (code-level plan + where to change things).
+	2.	What you do on Lambda from PowerShell (simple step-by-step).
+
+⸻
+
+1️⃣ For your dev – concrete changes
+
+All paths below assume the repo layout we just inspected:
+
+src/
+  baseline_sft/
+  eval/
+  regime_w/
+  rl_training/
+
+1.1 Switch base to Abel + create a fresh LoRA
+
+Goal: Abel as the “math brain”, new LoRA head for your coherence work. We leave DeepSeek files as “legacy”.
+
+(a) Keep DeepSeek code, but label it legacy
+	•	Create a folder:
+
+mkdir -p src/legacy
+
+	•	Move the old DeepSeek-specific RL bits there (so they don’t confuse later):
+
+git mv src/rl_training/train_dpo.py src/legacy/train_dpo_deepseek_legacy.py
+git mv src/rl_training/collect_rollouts.py src/legacy/collect_rollouts_deepseek_legacy.py
+git mv src/eval/eval_gsm8k_dev.py src/legacy/eval_gsm8k_dev_deepseek_legacy.py
+git mv src/eval/eval_platinum.py src/legacy/eval_platinum_deepseek_legacy.py
+
+(You don’t have to move all of them, but this keeps a clear line between “old DeepSeek experiments” and “new Abel pipeline”.)
+
+(b) New SFT script for Abel
+
+Create src/baseline_sft/train_sft_abel.py:
+
+Key parts (dev can copy most boilerplate from your existing train_sft.py):
+
+# src/baseline_sft/train_sft_abel.py
+
+import os
+import json
+from dataclasses import dataclass
+from typing import List
+
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from datasets import load_dataset
+from trl import SFTTrainer, SFTConfig
+from peft import LoraConfig
+
+BASE_MODEL = "GAIR/Abel-7B-002"   # <- new
+TRAIN_PATH = "data/gsm8k_train.jsonl"
+OUTPUT_DIR = "checkpoints/abel_sft_lora"  # fresh LoRA
+
+@dataclass
+class TrainExample:
+    question: str
+    answer: str
+
+def load_gsm8k(path: str) -> List[TrainExample]:
+    data = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            raw = json.loads(line)
+            data.append(TrainExample(
+                question=raw["question"],
+                answer=raw["answer"],
+            ))
+    return data
+
+def formatting_func(examples):
+    texts = []
+    for q, a in zip(examples["question"], examples["answer"]):
+        prompt = (
+            "You are a careful math tutor. Solve the problem step-by-step, "
+            "then give the final answer in the format '#### 42'.\n\n"
+            f"Problem:\n{q}\n\nSolution:\n{a}\n"
+        )
+        texts.append(prompt)
+    return {"text": texts}
+
+def main():
+    dataset = load_dataset(
+        "json",
+        data_files={"train": TRAIN_PATH},
+        split="train",
+    )
+
+    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
+    tokenizer.pad_token = tokenizer.eos_token
+
+    print("Loading Abel base model in bf16...")
+    model = AutoModelForCausalLM.from_pretrained(
+        BASE_MODEL,
+        device_map="auto",
+        torch_dtype=torch.bfloat16,
+    )
+
+    lora_config = LoraConfig(
+        r=16,
+        lora_alpha=32,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+        lora_dropout=0.05,
+        bias="none",
+        task_type="CAUSAL_LM",
+    )
+
+    sft_config = SFTConfig(
+        output_dir=OUTPUT_DIR,
+        num_train_epochs=1,
+        per_device_train_batch_size=4,
+        gradient_accumulation_steps=4,
+        learning_rate=5e-5,
+        bf16=True,
+        logging_steps=10,
+        save_steps=200,
+        save_total_limit=3,
+        max_seq_length=1024,
+    )
+
+    trainer = SFTTrainer(
+        model=model,
+        tokenizer=tokenizer,
+        peft_config=lora_config,
+        train_dataset=dataset,
+        formatting_func=formatting_func,
+        args=sft_config,
+    )
+
+    print("\nStarting Abel SFT (LoRA)...\n")
+    trainer.train()
+
+    print("Saving LoRA adapter + tokenizer to:", OUTPUT_DIR)
+    trainer.save_model(OUTPUT_DIR)
+    tokenizer.save_pretrained(OUTPUT_DIR)
+    print("Done! Abel SFT LoRA saved.")
+
+if __name__ == "__main__":
+    main()
+
+Notes:
+	•	No BitsAndBytes / 4-bit — H100 can handle full Abel in bf16 easily.
+	•	Saving to checkpoints/abel_sft_lora/ so DeepSeek SFT stays untouched.
+
+⸻
+
+1.2 Regime-W rollout collection & preferences with Abel
+
+We keep your Regime-W scoring exactly as-is (IP-protected) and just point it at Abel.
+
+(a) New rollout collector: collect_rollouts_abel.py
+
+Create src/rl_training/collect_rollouts_abel.py:
+
+import json
+from typing import List, Dict
+
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft import PeftModel
+
+from src.regime_w.arms import build_all_arms
+from src.regime_w.reward import Trajectory, compute_rewards_for_question, extract_answer
+
+DATA_PATH = "data/gsm8k_train.jsonl"
+BASE_MODEL = "GAIR/Abel-7B-002"
+SFT_PATH = "checkpoints/abel_sft_lora"
+OUT_PATH = "data/abel_regime_w_rollouts.jsonl"
+
+def load_gsm8k(path: str) -> List[Dict]:
+    data = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            data.append(json.loads(line))
+    return data
+
+def main():
+    print("Loading GSM8K train data...")
+    dataset = load_gsm8k(DATA_PATH)
+    dataset = dataset[:500]  # you can bump this later
+
+    print(f"Using {len(dataset)} examples for Regime W rollout collection.")
+
+    print("Loading tokenizer from base model", BASE_MODEL)
+    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
+
+    print("Loading Abel base model in bf16...")
+    base_model = AutoModelForCausalLM.from_pretrained(
+        BASE_MODEL,
+        device_map="auto",
+        torch_dtype="bfloat16",
+    )
+
+    print("Loading Abel SFT LoRA adapter from", SFT_PATH)
+    model = PeftModel.from_pretrained(base_model, SFT_PATH)
+    model.eval()
+
+    arms = build_all_arms()
+    print(f"Built {len(arms)} arms.")
+
+    with open(OUT_PATH, "w", encoding="utf-8") as out_f:
+        for idx, ex in enumerate(dataset):
+            q = ex["question"]
+            gold = ex["answer"]
+
+            trajectories = []
+            for arm in arms:
+                user_prompt = arm.user_template.format(question=q)
+                prompt = f"{arm.system}\n\n{user_prompt}"
+                inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+                gen = model.generate(
+                    **inputs,
+                    max_new_tokens=256,
+                    temperature=arm.temperature,
+                    top_p=arm.top_p,
+                )
+                text = tokenizer.decode(gen[0], skip_special_tokens=True)
+                ans = extract_answer(text)
+                trajectories.append(Trajectory(
+                    text=text,
+                    reasoning=text,
+                    answer=ans,
+                    num_tokens=len(text.split()),
+                ))
+
+            rewards = compute_rewards_for_question(q, trajectories, gold)
+            trajectory_records = []
+            for t, r in zip(trajectories, rewards):
+                trajectory_records.append({
+                    "full_text": t.text,
+                    "answer": t.answer,
+                    "reasoning": t.reasoning,
+                    "num_tokens": t.num_tokens,
+                    "reward": r,
+                })
+
+            record = {
+                "question": q,
+                "gold_answer": gold,
+                "trajectories": trajectory_records,
+            }
+            out_f.write(json.dumps(record) + "\n")
+
+            if (idx + 1) % 20 == 0:
+                print(f"  Collected {idx+1}/{len(dataset)} rollouts")
+
+    print("Saved Abel Regime W rollouts to", OUT_PATH)
+
+if __name__ == "__main__":
+    main()
+
+(b) New preferences builder: build_preferences_abel.py
+
+Here we enforce your rule:
+	•	Correctness first; coherence only breaks ties among correct answers.
+
+Create src/rl_training/build_preferences_abel.py:
+
+import json
+from typing import List, Dict
+
+ROLLOUTS_PATH = "data/abel_regime_w_rollouts.jsonl"
+PREFERENCES_PATH = "data/abel_coherence_preferences.jsonl"
+
+def load_rollouts(path: str) -> List[Dict]:
+    data = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            data.append(json.loads(line))
+    return data
+
+def main():
+    rollouts = load_rollouts(ROLLOUTS_PATH)
+    preferences = []
+    skipped = 0
+
+    for rec in rollouts:
+        trajs = rec["trajectories"]
+        if len(trajs) < 2:
+            skipped += 1
+            continue
+
+        # correctness flags
+        for t in trajs:
+            t["correct"] = t.get("reward", 0) > 0.5  # or use your own correct flag
+
+        # 1) correctness pairs (correct vs wrong)
+        for i in range(len(trajs)):
+            for j in range(i + 1, len(trajs)):
+                a, b = trajs[i], trajs[j]
+                if a["correct"] and not b["correct"]:
+                    preferences.append({
+                        "question": rec["question"],
+                        "gold_answer": rec["gold_answer"],
+                        "chosen": a["full_text"],
+                        "rejected": b["full_text"],
+                    })
+                elif b["correct"] and not a["correct"]:
+                    preferences.append({
+                        "question": rec["question"],
+                        "gold_answer": rec["gold_answer"],
+                        "chosen": b["full_text"],
+                        "rejected": a["full_text"],
+                    })
+
+        # 2) coherence among correct traces (if you stored s_wm separately, use it here)
+        # For now, we assume trajectories already sorted by reward = correctness + coherence.
+        correct_trajs = [t for t in trajs if t["correct"]]
+        if len(correct_trajs) >= 2:
+            correct_trajs = sorted(correct_trajs, key=lambda t: t["reward"], reverse=True)
+            best = correct_trajs[0]
+            worst = correct_trajs[-1]
+            if best["reward"] > worst["reward"] + 0.1:
+                preferences.append({
+                    "question": rec["question"],
+                    "gold_answer": rec["gold_answer"],
+                    "chosen": best["full_text"],
+                    "rejected": worst["full_text"],
+                })
+
+    print(f"Created {len(preferences)} preference pairs (skipped {skipped} rollouts).")
+
+    with open(PREFERENCES_PATH, "w", encoding="utf-8") as f:
+        for pref in preferences:
+            f.write(json.dumps(pref) + "\n")
+
+    print(f"Saved preferences to {PREFERENCES_PATH}")
+
+if __name__ == "__main__":
+    main()
+
+(Your dev can hook in the real s_wm if you want more fine-grained coherence; the main structure is correctness-first.)
+
+⸻
+
+1.3 Coherence DPO head: train_dpo_coherence.py
+
+Create src/rl_training/train_dpo_coherence.py:
+
+from datasets import load_dataset
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft import PeftModel, LoraConfig, get_peft_model
+from trl import DPOTrainer, DPOConfig
+
+BASE_MODEL = "GAIR/Abel-7B-002"
+SFT_PATH = "checkpoints/abel_sft_lora"
+PREFERENCES_PATH = "data/abel_coherence_preferences.jsonl"
+RL_OUTPUT_DIR = "checkpoints/abel_coherence_lora"
+
+def main():
+    print("Loading Abel base model...")
+    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
+    tokenizer.pad_token = tokenizer.eos_token
+
+    base_model = AutoModelForCausalLM.from_pretrained(
+        BASE_MODEL,
+        device_map="auto",
+        torch_dtype="bfloat16",
+    )
+
+    # Start from Abel + SFT LoRA
+    policy_model = PeftModel.from_pretrained(base_model, SFT_PATH)
+    policy_model = policy_model.merge_and_unload()  # optional: bake SFT in
+    policy_model = get_peft_model(
+        policy_model,
+        LoraConfig(
+            r=8,
+            lora_alpha=16,
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+            lora_dropout=0.05,
+            bias="none",
+            task_type="CAUSAL_LM",
+        ),
+    )
+
+    # Reference model = Abel + SFT (frozen)
+    ref_model = AutoModelForCausalLM.from_pretrained(
+        BASE_MODEL,
+        device_map="auto",
+        torch_dtype="bfloat16",
+    )
+    ref_model = PeftModel.from_pretrained(ref_model, SFT_PATH)
+    ref_model.eval()
+
+    print("Loading coherence preferences...")
+    dataset = load_dataset(
+        "json",
+        data_files={"train": PREFERENCES_PATH},
+        split="train",
+    )
+
+    dpo_config = DPOConfig(
+        output_dir=RL_OUTPUT_DIR,
+        per_device_train_batch_size=4,
+        gradient_accumulation_steps=4,
+        learning_rate=5e-6,
+        num_train_epochs=1,
+        bf16=True,
+        logging_steps=10,
+        save_steps=100,
+        save_total_limit=2,
+        beta=0.1,
+    )
+
+    trainer = DPOTrainer(
+        model=policy_model,
+        ref_model=ref_model,
+        args=dpo_config,
+        tokenizer=tokenizer,
+        train_dataset=dataset,
+    )
+
+    print("Starting coherence DPO training...")
+    trainer.train()
+
+    print("Saving Abel coherence LoRA to", RL_OUTPUT_DIR)
+    trainer.model.save_pretrained(RL_OUTPUT_DIR)
+    tokenizer.save_pretrained(RL_OUTPUT_DIR)
+    print("Done!")
+
+if __name__ == "__main__":
+    main()
+
+This is your “penalize incoherence, prefer correct & coherent” head.
+
+⸻
+
+1.4 Fast, batched, resumable Platinum eval
+
+We don’t train on Platinum. We only test on it.
+
+Use HF dataset: madrylab/gsm8k-platinum.
+
+Create src/eval/eval_platinum_abel.py:
+
+Key ideas:
+	•	Batch prompts (e.g. 8–16 per batch).
+	•	Log each example to JSONL so you can resume.
+	•	Evaluate three models:
+	•	Base Abel
+	•	Abel SFT LoRA
+	•	Abel SFT + coherence DPO LoRA
+
+Skeleton:
+
+import os
+import json
+import re
+from typing import List, Dict
+
+from datasets import load_dataset
+from transformers import AutoTokenizer, AutoModelForCausalLM
+from peft import PeftModel
+
+BASE_MODEL = "GAIR/Abel-7B-002"
+RESULTS_DIR = "outputs"
+os.makedirs(RESULTS_DIR, exist_ok=True)
+
+BATCH_SIZE = 8
+
+def normalize_answer(ans: str) -> str:
+    ans = ans.strip().lower().replace(",", "")
+    if "." in ans:
+        try:
+            num = float(ans)
+            if num == int(num):
+                ans = str(int(num))
+        except ValueError:
+            pass
+    return ans
+
+def extract_answer(text: str) -> str:
+    marker = "####"
+    if marker in text:
+        tail = text.split(marker)[-1]
+        m = re.search(r"-?\d+\.?\d*", tail)
+        if m:
+            return m.group(0).strip()
+    nums = re.findall(r"-?\d+\.?\d*", text)
+    if nums:
+        return nums[-1].strip()
+    return text.strip()
+
+def build_prompt(q: str) -> str:
+    return (
+        "You are a careful math tutor. Solve the problem step-by-step, "
+        "then give the final answer in the format '#### 42'.\n\n"
+        f"Problem:\n{q}\n\nSolution:\n"
+    )
+
+def eval_model(label: str, model, tokenizer, test_data: List[Dict], out_path: str):
+    # Resume: skip already evaluated lines
+    seen = 0
+    if os.path.exists(out_path):
+        with open(out_path, "r", encoding="utf-8") as f:
+            seen = sum(1 for _ in f)
+        print(f"[{label}] Resuming from index {seen}")
+    else:
+        print(f"[{label}] Starting fresh eval")
+
+    total = len(test_data)
+    correct = 0
+
+    # Re-count correct if resuming
+    if seen > 0:
+        with open(out_path, "r", encoding="utf-8") as f:
+            for line in f:
+                rec = json.loads(line)
+                if rec["is_correct"]:
+                    correct += 1
+
+    with open(out_path, "a", encoding="utf-8") as out_f:
+        idx = seen
+        while idx < total:
+            batch = test_data[idx : idx + BATCH_SIZE]
+            prompts = [build_prompt(ex["question"]) for ex in batch]
+            inputs = tokenizer(
+                prompts,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+            ).to(model.device)
+            input_len = inputs["input_ids"].shape[1]
+
+            gen = model.generate(
+                **inputs,
+                max_new_tokens=256,
+                temperature=0.6,
+                top_p=0.9,
+            )
+            responses = gen[:, input_len:]
+            texts = tokenizer.batch_decode(responses, skip_special_tokens=True)
+
+            for ex, text in zip(batch, texts):
+                pred_raw = extract_answer(text)
+                gold_raw = extract_answer(ex["answer"])
+                pred = normalize_answer(pred_raw)
+                gold = normalize_answer(gold_raw)
+                is_correct = (pred == gold) and (pred != "")
+
+                if is_correct:
+                    correct += 1
+
+                rec = {
+                    "id": idx,
+                    "question": ex["question"],
+                    "gold_answer": ex["answer"],
+                    "pred_raw": text,
+                    "pred_num": pred,
+                    "gold_num": gold,
+                    "is_correct": is_correct,
+                    "label": label,
+                }
+                out_f.write(json.dumps(rec) + "\n")
+
+                idx += 1
+
+                if idx % 50 == 0:
+                    acc = correct / idx
+                    print(f"[{label}] Progress: {idx}/{total}, acc={acc:.3f}")
+
+    final_acc = correct / total
+    print(f"[{label}] Final accuracy: {final_acc:.3f} ({correct}/{total})")
+    return final_acc
+
+def main():
+    print("Loading GSM8K Platinum test set...")
+    platinum = load_dataset("madrylab/gsm8k-platinum", "main", split="test")
+    test_data = list(platinum)
+
+    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
+    tokenizer.pad_token = tokenizer.eos_token
+
+    # Base Abel
+    base_model = AutoModelForCausalLM.from_pretrained(
+        BASE_MODEL,
+        device_map="auto",
+        torch_dtype="bfloat16",
+    )
+    base_acc = eval_model(
+        "Abel base",
+        base_model,
+        tokenizer,
+        test_data,
+        os.path.join(RESULTS_DIR, "abel_platinum_base.jsonl"),
+    )
+
+    # Abel + SFT LoRA
+    sft_base = AutoModelForCausalLM.from_pretrained(
+        BASE_MODEL,
+        device_map="auto",
+        torch_dtype="bfloat16",
+    )
+    sft_model = PeftModel.from_pretrained(sft_base, "checkpoints/abel_sft_lora")
+    sft_model.eval()
+    sft_acc = eval_model(
+        "Abel SFT LoRA",
+        sft_model,
+        tokenizer,
+        test_data,
+        os.path.join(RESULTS_DIR, "abel_platinum_sft.jsonl"),
+    )
+
+    # Abel + SFT + coherence DPO LoRA
+    rl_base = AutoModelForCausalLM.from_pretrained(
+        BASE_MODEL,
+        device_map="auto",
+        torch_dtype="bfloat16",
+    )
+    rl_model = PeftModel.from_pretrained(rl_base, "checkpoints/abel_coherence_lora")
+    rl_model.eval()
+    rl_acc = eval_model(
+        "Abel SFT + coherence DPO",
+        rl_model,
+        tokenizer,
+        test_data,
+        os.path.join(RESULTS_DIR, "abel_platinum_rl.jsonl"),
+    )
+
+    print("=" * 80)
+    print("GSM8K Platinum Results")
+    print(f"  Abel base:                {base_acc:.3f}")
+    print(f"  Abel + SFT LoRA:          {sft_acc:.3f}")
+    print(f"  Abel + SFT + coh DPO:     {rl_acc:.3f}")
+    print("=" * 80)
+
+if __name__ == "__main__":
+    main()
+
+This gives you:
+	•	Batched eval (much faster on H100).
+	•	Resumable runs per model (thanks to JSONL logs).
+	•	Full per-question logs you can download and analyze.
+
+⸻
+
+2️⃣ For you – simple Lambda + PowerShell steps
+
+I’ll keep this as blunt as possible.
+
+2.1 Upgrade your Lambda instance
+
+In the Lambda Labs UI:
+	1.	Stop your current A100 instance (if needed).
+	2.	Start a new H100 80GB (or similar) instance.
+	3.	Note the new IP address.
+
+(If you get a new IP, you’ll use that in your SSH command.)
+
+2.2 From your Windows PowerShell
+
+You already did this successfully; same pattern:
+	1.	SSH into Lambda
+
+cd C:\Users\dylan\Downloads
+ssh -i .\lambda_a100_key.pem ubuntu@YOUR_H100_IP
+
+	2.	Activate your venv and go to the project
+
+In the SSH shell:
+
+source ~/projects/.venv/bin/activate
+cd ~/projects/looper-math-platinum-8b
+git pull   # pull latest from Replit/GitHub after your dev pushes changes
+
+	3.	Train Abel SFT LoRA
+
+python -m src.baseline_sft.train_sft_abel
+
+You’ll see logs like before. When it finishes you should see:
+	•	checkpoints/abel_sft_lora/ with adapter + tokenizer.
+
+	4.	Collect Regime-W rollouts with Abel
+
+python -m src.rl_training.collect_rollouts_abel
+
+You should see:
+	•	progress messages (Collected N/500 rollouts)
+	•	file: data/abel_regime_w_rollouts.jsonl
+
+	5.	Build preferences
+
+python -m src.rl_training.build_preferences_abel
+
+You should see:
+	•	number of pairs created
+	•	file: data/abel_coherence_preferences.jsonl
+
+	6.	Train coherence DPO LoRA
+
+python -m src.rl_training.train_dpo_coherence
+
+Output:
+	•	training logs
+	•	final checkpoint in checkpoints/abel_coherence_lora/
+
+	7.	Run batched Platinum eval
+
+python -m src.eval.eval_platinum_abel
+
+This will:
+	•	Load GSM8K Platinum from HF.
+	•	Evaluate base Abel, Abel+SFT, and Abel+SFT+coh DPO.
+	•	Log per-model JSONL results under outputs/:
+	•	outputs/abel_platinum_base.jsonl
+	•	outputs/abel_platinum_sft.jsonl
+	•	outputs/abel_platinum_rl.jsonl
+
+If anything gets interrupted, just rerun the same command; it will resume from where it left off thanks to the JSONL lengths.
+	8.	Download results to your PC
+
+From a new PowerShell window on your machine:
+
+cd C:\Users\dylan\Downloads
+mkdir model_eval -ErrorAction SilentlyContinue
+
+scp -i .\lambda_a100_key.pem ubuntu@YOUR_H100_IP:/home/ubuntu/projects/looper-math-platinum-8b/outputs/abel_platinum_*.jsonl .\model_eval\
+
+Now you have all three result files locally to inspect.
+
+⸻
+
+If you want, next step I can:
+	•	Propose a super simple Jupyter / Python notebook to load those three JSONL files and compare accuracy by difficulty bucket, question type, etc., and inspect where coherence helped or hurt.
