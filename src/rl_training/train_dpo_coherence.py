@@ -44,25 +44,26 @@ def main():
     print(f"Loading Abel base model in {dtype_name}...")
     base_model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
-        device_map="auto",
         torch_dtype=dtype,
     )
-    base_model.gradient_checkpointing_enable()
+    
+    # Enable non-reentrant gradient checkpointing (fixes LoRA + DDP conflict)
+    print("Enabling non-reentrant gradient checkpointing for LoRA + DDP compatibility...")
+    base_model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
 
     # Load SFT LoRA as starting point for policy model
     print(f"Loading Abel SFT LoRA adapter from {SFT_PATH}...")
     policy_model = PeftModel.from_pretrained(base_model, SFT_PATH)
     policy_model.tokenizer = tokenizer
     
-    # Re-enable gradient checkpointing for PEFT model (required for H100 memory efficiency)
+    # Re-enable non-reentrant gradient checkpointing for PEFT model (required for H100 memory efficiency)
     policy_model.enable_input_require_grads()
-    policy_model.gradient_checkpointing_enable()
+    policy_model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
 
     # Create separate reference model (frozen SFT) with same dtype
     print(f"Loading separate reference model (frozen Abel + SFT LoRA) in {dtype_name}...")
     ref_base = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
-        device_map="auto",
         torch_dtype=dtype,
     )
     ref_model = PeftModel.from_pretrained(ref_base, SFT_PATH)
