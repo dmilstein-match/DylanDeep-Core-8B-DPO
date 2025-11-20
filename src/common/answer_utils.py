@@ -29,22 +29,26 @@ def extract_answer(text: str) -> str:
     Returns:
         Extracted answer string (may still need normalization)
     """
+    # Regex pattern to match numbers with optional commas and decimals
+    # Matches: -123, 1,000, 42.5, -1,234.56, .5, etc.
+    number_pattern = r"-?(?:[\d,]+\.?\d*|\.\d+)"
+
     # Try new "Answer:" format first
     if "Answer:" in text:
         tail = text.split("Answer:")[-1]
-        m = re.search(r"-?\d+\.?\d*", tail)
+        m = re.search(number_pattern, tail)
         if m:
             return m.group(0).strip()
 
     # Backward compatibility: try "####" format
     if "####" in text:
         tail = text.split("####")[-1]
-        m = re.search(r"-?\d+\.?\d*", tail)
+        m = re.search(number_pattern, tail)
         if m:
             return m.group(0).strip()
 
     # Fallback: last number in text
-    nums = re.findall(r"-?\d+\.?\d*", text)
+    nums = re.findall(number_pattern, text)
     if nums:
         return nums[-1].strip()
 
