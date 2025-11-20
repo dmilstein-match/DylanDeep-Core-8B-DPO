@@ -59,10 +59,19 @@ def main():
     )
     args = parser.parse_args()
 
-    # Get distributed environment info
+    # Auto-detect GPU count
+    import subprocess
+    try:
+        gpu_count = len(subprocess.check_output(
+            ["nvidia-smi", "-L"], encoding="utf-8"
+        ).strip().split("\n"))
+    except:
+        gpu_count = 1
+
+    # Override with environment variable if set
+    world_size = int(os.environ.get("WORLD_SIZE", gpu_count))
     rank = int(os.environ.get("RANK", 0))
-    world_size = int(os.environ.get("WORLD_SIZE", 1))
-    
+
     if rank == 0:
         print("=" * 80)
         print("Abel Regime W Rollout Collection (vLLM Optimized)")
@@ -72,7 +81,8 @@ def main():
         print(f"  Data path: {args.data_path}")
         print(f"  Output path: {args.out_path}")
         print(f"  N samples: {args.n_samples}")
-        print(f"  World size (GPUs): {world_size}\n")
+        print(f"  GPUs detected: {gpu_count}")
+        print(f"  Tensor parallel size: {world_size}\n")
     
     # Load training data
     if rank == 0:

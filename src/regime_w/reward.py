@@ -27,13 +27,17 @@ class Trajectory:
     arm_name: Optional[str] = None  # NEW: Track which arm generated this
 
 
-def compute_trajectory_quality_score(
-    trajectory: Trajectory,
+def compute_trajectory_quality_score_optimized(
+    idx: int,
+    correct: float,
     all_trajectories: List[Trajectory],
-    correct_flags: List[float],
+    correct_trajectories: List[Trajectory],
+    correct_indices: List[int],
+    canonical_probe_indices: List[int],
+    trajectory_token_sets: List[set],
 ) -> float:
     """
-    Compute trajectory-specific quality score for coherence differentiation.
+    Optimized trajectory-specific quality score (uses pre-computed values).
 
     Among correct trajectories, this measures:
     1. Conciseness (shorter is better - Occam's razor)
@@ -42,20 +46,17 @@ def compute_trajectory_quality_score(
     Returns: Score in [0.0, 1.0]
     """
     # Only differentiate among correct trajectories
-    idx = all_trajectories.index(trajectory)
-    if correct_flags[idx] < 0.5:
+    if correct < 0.5:
         return 0.0
-
-    correct_trajectories = [
-        t for t, c in zip(all_trajectories, correct_flags) if c > 0.5
-    ]
 
     if len(correct_trajectories) < 2:
         return 0.5  # No differentiation needed
 
+    trajectory = all_trajectories[idx]
+
     # Component 1: Conciseness score (shorter is better)
     # Normalize by min/max length among correct trajectories
-    correct_lengths = [t.num_tokens for t in correct_trajectories]
+    correct_lengths = [all_trajectories[i].num_tokens for i in correct_indices]
     min_len = min(correct_lengths)
     max_len = max(correct_lengths)
 
@@ -66,25 +67,19 @@ def compute_trajectory_quality_score(
         conciseness = 1.0 - (trajectory.num_tokens - min_len) / (max_len - min_len)
 
     # Component 2: Alignment with canonical probes (if available)
-    # Find canonical probe trajectories (A = wolfram_standard, A' = wolfram_rephrase)
-    canonical_trajectories = [
-        t for t in correct_trajectories
-        if t.arm_name in ["wolfram_standard", "wolfram_rephrase"]
-    ]
-
-    if not canonical_trajectories:
+    if not canonical_probe_indices:
         # No probes available, use conciseness only
         return conciseness
 
     # Compute token overlap (Jaccard similarity) with canonical probes
-    trajectory_tokens = set(trajectory.reasoning.lower().split())
+    trajectory_tokens = trajectory_token_sets[idx]
 
     if not trajectory_tokens:
         return conciseness * 0.5
 
     probe_overlaps = []
-    for probe in canonical_trajectories:
-        probe_tokens = set(probe.reasoning.lower().split())
+    for probe_idx in canonical_probe_indices:
+        probe_tokens = trajectory_token_sets[probe_idx]
         if probe_tokens:
             intersection = len(trajectory_tokens & probe_tokens)
             union = len(trajectory_tokens | probe_tokens)
@@ -160,15 +155,38 @@ def compute_rewards_for_question(
         }
         all_correct_same_answer = len(correct_answers) == 1
 
+    # Pre-compute token sets for efficiency (avoid redundant tokenization)
+    trajectory_token_sets = [
+        set(t.reasoning.lower().split()) for t in trajectories
+    ]
+
+    # Pre-identify correct trajectories and canonical probes
+    correct_trajectories = [
+        t for t, c in zip(trajectories, correct_flags) if c > 0.5
+    ]
+    correct_indices = [
+        i for i, c in enumerate(correct_flags) if c > 0.5
+    ]
+
+    # Find canonical probe indices once
+    canonical_probe_indices = [
+        i for i, t in enumerate(trajectories)
+        if t.arm_name in ["wolfram_standard", "wolfram_rephrase"]
+        and correct_flags[i] > 0.5
+    ]
+
     rewards: List[float] = []
-    for t, correct in zip(trajectories, correct_flags):
+    for idx, (t, correct) in enumerate(zip(trajectories, correct_flags)):
         base = ALPHA_CORRECT * correct
 
         # Question-level coherence (same for all trajectories)
         coherence_term = BETA_COHERENCE * s_wm
 
         # NEW: Trajectory-specific quality score (creates differentiation)
-        trajectory_quality = compute_trajectory_quality_score(t, trajectories, correct_flags)
+        trajectory_quality = compute_trajectory_quality_score_optimized(
+            idx, correct, trajectories, correct_trajectories, correct_indices,
+            canonical_probe_indices, trajectory_token_sets
+        )
         quality_bonus = GAMMA_TRAJECTORY_QUALITY * trajectory_quality
 
         extra_tokens = max(0, t.num_tokens - LENGTH_PENALTY_THRESHOLD)
