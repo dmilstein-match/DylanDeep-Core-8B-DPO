@@ -30,9 +30,9 @@ class Trajectory:
 def compute_trajectory_quality_score_optimized(
     idx: int,
     correct: float,
-    all_trajectories: List[Trajectory],
-    correct_trajectories: List[Trajectory],
-    correct_indices: List[int],
+    trajectory: Trajectory,
+    min_len: int,
+    max_len: int,
     canonical_probe_indices: List[int],
     trajectory_token_sets: List[set],
 ) -> float:
@@ -49,17 +49,8 @@ def compute_trajectory_quality_score_optimized(
     if correct < 0.5:
         return 0.0
 
-    if len(correct_trajectories) < 2:
-        return 0.5  # No differentiation needed
-
-    trajectory = all_trajectories[idx]
-
     # Component 1: Conciseness score (shorter is better)
-    # Normalize by min/max length among correct trajectories
-    correct_lengths = [all_trajectories[i].num_tokens for i in correct_indices]
-    min_len = min(correct_lengths)
-    max_len = max(correct_lengths)
-
+    # Uses pre-computed min/max lengths
     if max_len == min_len:
         conciseness = 0.5
     else:
@@ -161,12 +152,17 @@ def compute_rewards_for_question(
     ]
 
     # Pre-identify correct trajectories and canonical probes
-    correct_trajectories = [
-        t for t, c in zip(trajectories, correct_flags) if c > 0.5
-    ]
     correct_indices = [
         i for i, c in enumerate(correct_flags) if c > 0.5
     ]
+
+    # Pre-compute min/max lengths for conciseness scoring
+    if len(correct_indices) >= 2:
+        correct_lengths = [trajectories[i].num_tokens for i in correct_indices]
+        min_len = min(correct_lengths)
+        max_len = max(correct_lengths)
+    else:
+        min_len = max_len = 0  # Not used when <2 correct trajectories
 
     # Find canonical probe indices once
     canonical_probe_indices = [
@@ -184,7 +180,7 @@ def compute_rewards_for_question(
 
         # NEW: Trajectory-specific quality score (creates differentiation)
         trajectory_quality = compute_trajectory_quality_score_optimized(
-            idx, correct, trajectories, correct_trajectories, correct_indices,
+            idx, correct, t, min_len, max_len,
             canonical_probe_indices, trajectory_token_sets
         )
         quality_bonus = GAMMA_TRAJECTORY_QUALITY * trajectory_quality
