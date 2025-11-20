@@ -19,7 +19,7 @@ DPO_OUTPUT_DIR = "checkpoints/abel_dpo_coherence_lora"
 def build_prompt(question: str) -> str:
     return (
         "You are a careful math tutor. Solve the problem step-by-step, "
-        "then give the final answer in the format '#### 42'.\n\n"
+        "then give the final answer in the format 'Answer: 42'.\n\n"
         f"Problem:\n{question}\n\nSolution:\n"
     )
 
@@ -55,10 +55,21 @@ def main():
     print(f"Loading Abel SFT LoRA adapter from {SFT_PATH}...")
     policy_model = PeftModel.from_pretrained(base_model, SFT_PATH)
     policy_model.tokenizer = tokenizer
-    
+
     # Re-enable non-reentrant gradient checkpointing for PEFT model (required for H100 memory efficiency)
     policy_model.enable_input_require_grads()
     policy_model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+
+    # CRITICAL: Explicitly unfreeze LoRA parameters (DPOTrainer sometimes freezes them)
+    print("Unfreezing LoRA parameters for DPO training...")
+    for name, param in policy_model.named_parameters():
+        if "lora_" in name:
+            param.requires_grad = True
+
+    # Verify trainable parameters
+    trainable_params = sum(p.numel() for p in policy_model.parameters() if p.requires_grad)
+    total_params = sum(p.numel() for p in policy_model.parameters())
+    print(f"Trainable parameters: {trainable_params:,} / {total_params:,} ({100*trainable_params/total_params:.2f}%)")
 
     # Create separate reference model (frozen SFT) with same dtype
     print(f"Loading separate reference model (frozen Abel + SFT LoRA) in {dtype_name}...")
@@ -115,12 +126,13 @@ def main():
         pass
 
     # DPO training configuration (8× H100-optimized batch sizes)
+    # Updated config: 5e-5 LR (10x higher for actual weight updates) + 3 epochs
     dpo_config = DPOConfig(
         output_dir=DPO_OUTPUT_DIR,
-        num_train_epochs=1,
+        num_train_epochs=3,
         per_device_train_batch_size=2,
         gradient_accumulation_steps=2,
-        learning_rate=5e-6,
+        learning_rate=5e-5,
         logging_steps=10,
         save_strategy="epoch",
         bf16=use_bf16,

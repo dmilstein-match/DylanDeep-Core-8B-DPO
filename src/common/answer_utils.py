@@ -16,25 +16,34 @@ import re
 def extract_answer(text: str) -> str:
     """
     Extract the final numeric answer from text.
-    
+
     Strategy:
-    1. Prefer the number after '####' marker if present
-    2. Otherwise, take the last number in the text
-    3. If no numbers found, return the text as-is
-    
+    1. Prefer the number after 'Answer:' marker if present (new format)
+    2. Fall back to '####' marker for backward compatibility
+    3. Otherwise, take the last number in the text
+    4. If no numbers found, return the text as-is
+
     Args:
         text: Model output or gold answer string
-        
+
     Returns:
         Extracted answer string (may still need normalization)
     """
-    marker = "####"
-    if marker in text:
-        tail = text.split(marker)[-1]
+    # Try new "Answer:" format first
+    if "Answer:" in text:
+        tail = text.split("Answer:")[-1]
         m = re.search(r"-?\d+\.?\d*", tail)
         if m:
             return m.group(0).strip()
 
+    # Backward compatibility: try "####" format
+    if "####" in text:
+        tail = text.split("####")[-1]
+        m = re.search(r"-?\d+\.?\d*", tail)
+        if m:
+            return m.group(0).strip()
+
+    # Fallback: last number in text
     nums = re.findall(r"-?\d+\.?\d*", text)
     if nums:
         return nums[-1].strip()

@@ -27,8 +27,6 @@ def build_prompt(question: str, system_prompt: str) -> str:
     """Build prompt with system message and question."""
     return (
         f"{system_prompt}\n\n"
-        "You are a careful math tutor. Solve the problem step-by-step, "
-        "then give the final answer in the format '#### 42'.\n\n"
         f"Problem:\n{question}\n\nSolution:\n"
     )
 
@@ -142,7 +140,13 @@ def main():
                 for i, arm in enumerate(arms):
                     # Get single prompt for this arm
                     arm_input = {k: v[i:i+1] for k, v in inputs.items()}
-                    
+
+                    # Set seed for reproducibility if provided in extra_cfg
+                    if arm.extra_cfg and "seed" in arm.extra_cfg:
+                        torch.manual_seed(arm.extra_cfg["seed"])
+                        if torch.cuda.is_available():
+                            torch.cuda.manual_seed_all(arm.extra_cfg["seed"])
+
                     # Generate with arm-specific temperature
                     gen = model.generate(
                         **arm_input,
@@ -155,13 +159,14 @@ def main():
                     # Decode response only (exclude prompt)
                     response_ids = gen[0][arm_input["input_ids"].shape[1]:]
                     text = tokenizer.decode(response_ids, skip_special_tokens=True)
-                    
+
                     # Create Trajectory object (answer=full text, not extracted)
                     trajectories.append(Trajectory(
                         text=text,
                         reasoning=text,
                         answer=text,  # Store full text for downstream extract_answer calls
                         num_tokens=len(text.split()),
+                        arm_name=arm.name,  # Track which arm generated this
                     ))
 
             # Compute Regime W rewards for all trajectories
@@ -176,10 +181,10 @@ def main():
                 # Extract answer from full text for correctness check
                 pred_normalized = normalize_answer(extract_answer(t.answer))
                 is_correct = (pred_normalized == gold_normalized) and (gold_normalized != "")
-                
+
                 # Extract answer for JSONL output
                 extracted_answer = extract_answer(t.answer)
-                
+
                 trajectory_records.append({
                     "full_text": t.text,
                     "answer": extracted_answer,
@@ -187,6 +192,7 @@ def main():
                     "num_tokens": t.num_tokens,
                     "reward": float(r),
                     "correct": bool(is_correct),
+                    "arm_name": t.arm_name,  # Track which arm generated this
                 })
 
             # Build rollout record
