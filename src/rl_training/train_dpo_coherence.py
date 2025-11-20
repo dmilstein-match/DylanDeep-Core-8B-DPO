@@ -40,12 +40,11 @@ def main():
     dtype = torch.bfloat16 if use_bf16 else torch.float16
     dtype_name = "bf16" if use_bf16 else "fp16"
 
-    # Load base model with detected dtype (force safetensors to avoid torch.load vulnerability)
+    # Load base model with detected dtype
     print(f"Loading Abel base model in {dtype_name}...")
     base_model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
         torch_dtype=dtype,
-        use_safetensors=True,
     )
     
     # Enable non-reentrant gradient checkpointing (fixes LoRA + DDP conflict)
@@ -77,7 +76,6 @@ def main():
     ref_base = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
         torch_dtype=dtype,
-        use_safetensors=True,
     )
     ref_model = PeftModel.from_pretrained(ref_base, SFT_PATH)
     ref_model.eval()
