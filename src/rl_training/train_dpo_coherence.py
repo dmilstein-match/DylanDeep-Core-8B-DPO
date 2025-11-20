@@ -45,6 +45,7 @@ def main():
     base_model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
         torch_dtype=dtype,
+        use_safetensors=False,  # Abel only has .bin files
     )
     
     # Enable non-reentrant gradient checkpointing (fixes LoRA + DDP conflict)
@@ -76,6 +77,7 @@ def main():
     ref_base = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
         torch_dtype=dtype,
+        use_safetensors=False,  # Abel only has .bin files
     )
     ref_model = PeftModel.from_pretrained(ref_base, SFT_PATH)
     ref_model.eval()
