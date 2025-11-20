@@ -56,10 +56,21 @@ def main():
     print(f"Loading Abel SFT LoRA adapter from {SFT_PATH}...")
     policy_model = PeftModel.from_pretrained(base_model, SFT_PATH)
     policy_model.tokenizer = tokenizer
-    
+
     # Re-enable non-reentrant gradient checkpointing for PEFT model (required for H100 memory efficiency)
     policy_model.enable_input_require_grads()
     policy_model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+
+    # CRITICAL: Explicitly unfreeze LoRA parameters (DPOTrainer sometimes freezes them)
+    print("Unfreezing LoRA parameters for DPO training...")
+    for name, param in policy_model.named_parameters():
+        if "lora_" in name:
+            param.requires_grad = True
+
+    # Verify trainable parameters
+    trainable_params = sum(p.numel() for p in policy_model.parameters() if p.requires_grad)
+    total_params = sum(p.numel() for p in policy_model.parameters())
+    print(f"Trainable parameters: {trainable_params:,} / {total_params:,} ({100*trainable_params/total_params:.2f}%)")
 
     # Create separate reference model (frozen SFT) with same dtype
     print(f"Loading separate reference model (frozen Abel + SFT LoRA) in {dtype_name}...")
