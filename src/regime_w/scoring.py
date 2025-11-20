@@ -129,5 +129,10 @@ def s_cf_for_question(arm_outputs: List[Dict]) -> float:
 def s_wm_for_question(s_end: float, s_path: float, s_cf: float) -> float:
     """
     Combined Regime W coherence score.
+
+    Weights optimized to focus on meaningful signals:
+    - 60% s_end: Final answer agreement (most critical)
+    - 40% s_path: Reasoning path consistency
+    - 0% s_cf: Disabled (was placeholder returning constant 0.5)
     """
-    return 0.4 * s_end + 0.3 * s_path + 0.3 * s_cf
+    return 0.6 * s_end + 0.4 * s_path + 0.0 * s_cf

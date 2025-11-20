@@ -32,19 +32,19 @@ def extract_answer(text: str) -> str:
     # Try new "Answer:" format first
     if "Answer:" in text:
         tail = text.split("Answer:")[-1]
-        m = re.search(r"-?\d+\.?\d*", tail)
+        m = re.search(r"-?[\d,]+\.?\d*", tail)
         if m:
             return m.group(0).strip()
 
     # Backward compatibility: try "####" format
     if "####" in text:
         tail = text.split("####")[-1]
-        m = re.search(r"-?\d+\.?\d*", tail)
+        m = re.search(r"-?[\d,]+\.?\d*", tail)
         if m:
             return m.group(0).strip()
 
     # Fallback: last number in text
-    nums = re.findall(r"-?\d+\.?\d*", text)
+    nums = re.findall(r"-?[\d,]+\.?\d*", text)
     if nums:
         return nums[-1].strip()
 
