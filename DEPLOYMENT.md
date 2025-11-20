@@ -21,8 +21,12 @@ This deployment includes all three tiers of the Regime W framework upgrade:
 ### **Tier 3: Upgrade Metrics**
 - ✅ **Real `s_cf`**: Measures answer agreement (replaces constant 0.5)
 - ✅ **Improved `s_path`**: 40% length coherence + 60% token overlap (Jaccard)
+- ✅ **Trajectory-specific quality scoring**: Creates reward differentiation among correct trajectories
+  - 40% conciseness (shorter is better - Occam's razor)
+  - 60% alignment with canonical probes (A, A')
+  - Enables coherence pair generation
 - ✅ **Standardized format**: `Answer: <number>` (backward compatible with `####`)
-- **Result**: Metrics aligned with dimensional reasoning
+- **Result**: Metrics aligned with dimensional reasoning + coherence pairs now possible
 
 ---
 
@@ -294,7 +298,9 @@ Per question:
 ### **Preference Pair Distribution:**
 ```
 Correctness pairs: ~70-80% (correct answer wins)
-Coherence pairs: ~20-30% (high s_wm wins among correct)
+Coherence pairs: ~20-30% (trajectory quality differentiation among correct)
+  - Quality score based on: conciseness (40%) + probe alignment (60%)
+  - Requires >0.01 reward difference threshold
 Total pairs: ~3,000-5,000
 ```
 
@@ -350,6 +356,29 @@ head -20 src/regime_w/scoring.py
 # Check for updated s_cf:
 grep -A 5 "def s_cf_for_question" src/regime_w/scoring.py
 # Should see logic for answer agreement, not just "return 0.5"
+```
+
+### **Issue: Zero coherence pairs despite having correct trajectories**
+```bash
+# This was fixed by adding trajectory-specific quality scoring
+# Old rollouts (before fix) will still produce 0 coherence pairs
+
+# Check if rollouts have arm_name field:
+head -1 data/abel_regime_w_rollouts.jsonl | python3 -c "
+import json, sys
+rec = json.loads(sys.stdin.read())
+has_arm_name = 'arm_name' in rec['trajectories'][0]
+print(f'Has arm_name field: {has_arm_name}')
+if not has_arm_name:
+    print('⚠️  Old rollouts detected - must regenerate with updated scripts')
+"
+
+# If arm_name is missing, regenerate rollouts:
+# Backup old rollouts first
+mv data/abel_regime_w_rollouts.jsonl data/abel_regime_w_rollouts_OLD.jsonl
+
+# Regenerate with trajectory quality scoring
+python src/rl_training/collect_rollouts_abel_vllm.py --n_samples 500
 ```
 
 ---

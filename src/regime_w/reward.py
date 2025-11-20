@@ -12,6 +12,7 @@ from src.common.answer_utils import extract_answer, normalize_answer
 
 ALPHA_CORRECT = 1.0
 BETA_COHERENCE = 0.5
+GAMMA_TRAJECTORY_QUALITY = 0.3  # NEW: Trajectory-specific quality bonus
 LENGTH_PENALTY_PER_TOKEN = 0.001
 LENGTH_PENALTY_THRESHOLD = 512
 FULL_AGREEMENT_BONUS = 0.2
@@ -23,6 +24,82 @@ class Trajectory:
     reasoning: str
     answer: str
     num_tokens: int
+    arm_name: Optional[str] = None  # NEW: Track which arm generated this
+
+
+def compute_trajectory_quality_score(
+    trajectory: Trajectory,
+    all_trajectories: List[Trajectory],
+    correct_flags: List[float],
+) -> float:
+    """
+    Compute trajectory-specific quality score for coherence differentiation.
+
+    Among correct trajectories, this measures:
+    1. Conciseness (shorter is better - Occam's razor)
+    2. Alignment with canonical probes (A, A')
+
+    Returns: Score in [0.0, 1.0]
+    """
+    # Only differentiate among correct trajectories
+    idx = all_trajectories.index(trajectory)
+    if correct_flags[idx] < 0.5:
+        return 0.0
+
+    correct_trajectories = [
+        t for t, c in zip(all_trajectories, correct_flags) if c > 0.5
+    ]
+
+    if len(correct_trajectories) < 2:
+        return 0.5  # No differentiation needed
+
+    # Component 1: Conciseness score (shorter is better)
+    # Normalize by min/max length among correct trajectories
+    correct_lengths = [t.num_tokens for t in correct_trajectories]
+    min_len = min(correct_lengths)
+    max_len = max(correct_lengths)
+
+    if max_len == min_len:
+        conciseness = 0.5
+    else:
+        # Invert: shorter gets higher score
+        conciseness = 1.0 - (trajectory.num_tokens - min_len) / (max_len - min_len)
+
+    # Component 2: Alignment with canonical probes (if available)
+    # Find canonical probe trajectories (A = wolfram_standard, A' = wolfram_rephrase)
+    canonical_trajectories = [
+        t for t in correct_trajectories
+        if t.arm_name in ["wolfram_standard", "wolfram_rephrase"]
+    ]
+
+    if not canonical_trajectories:
+        # No probes available, use conciseness only
+        return conciseness
+
+    # Compute token overlap (Jaccard similarity) with canonical probes
+    trajectory_tokens = set(trajectory.reasoning.lower().split())
+
+    if not trajectory_tokens:
+        return conciseness * 0.5
+
+    probe_overlaps = []
+    for probe in canonical_trajectories:
+        probe_tokens = set(probe.reasoning.lower().split())
+        if probe_tokens:
+            intersection = len(trajectory_tokens & probe_tokens)
+            union = len(trajectory_tokens | probe_tokens)
+            if union > 0:
+                probe_overlaps.append(intersection / union)
+
+    if not probe_overlaps:
+        probe_alignment = 0.5
+    else:
+        probe_alignment = max(probe_overlaps)  # Best alignment with any probe
+
+    # Combine: 40% conciseness + 60% probe alignment
+    quality_score = 0.4 * conciseness + 0.6 * probe_alignment
+
+    return max(0.0, min(1.0, quality_score))
 
 
 def compute_regime_w_metrics(question: str, trajectories: List[Trajectory]) -> Dict:
@@ -87,7 +164,12 @@ def compute_rewards_for_question(
     for t, correct in zip(trajectories, correct_flags):
         base = ALPHA_CORRECT * correct
 
+        # Question-level coherence (same for all trajectories)
         coherence_term = BETA_COHERENCE * s_wm
+
+        # NEW: Trajectory-specific quality score (creates differentiation)
+        trajectory_quality = compute_trajectory_quality_score(t, trajectories, correct_flags)
+        quality_bonus = GAMMA_TRAJECTORY_QUALITY * trajectory_quality
 
         extra_tokens = max(0, t.num_tokens - LENGTH_PENALTY_THRESHOLD)
         length_penalty = LENGTH_PENALTY_PER_TOKEN * float(extra_tokens)
@@ -96,7 +178,7 @@ def compute_rewards_for_question(
         if correct > 0.5 and all_correct_same_answer and s_end > 0.9:
             agreement_bonus = FULL_AGREEMENT_BONUS
 
-        reward = base + coherence_term + agreement_bonus - length_penalty
+        reward = base + coherence_term + quality_bonus + agreement_bonus - length_penalty
         rewards.append(reward)
 
     return rewards

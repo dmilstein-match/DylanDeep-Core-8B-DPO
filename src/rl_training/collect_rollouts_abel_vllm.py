@@ -25,12 +25,8 @@ def load_gsm8k(path: str) -> List[Dict]:
 
 def build_prompt(question: str, system_prompt: str) -> str:
     """Build prompt with system message and question."""
-    return (
-        f"{system_prompt}\n\n"
-        "You are a careful math tutor. Solve the problem step-by-step, "
-        "then give the final answer in the format '#### 42'.\n\n"
-        f"Problem:\n{question}\n\nSolution:\n"
-    )
+    # System prompt already contains answer format instruction
+    return f"{system_prompt}\n\nProblem:\n{question}\n\nSolution:\n"
 
 
 def main():
@@ -117,17 +113,21 @@ def main():
         # Build prompts for all arms
         prompts = []
         sampling_params_list = []
-        
+        arm_names = []  # Track arm names for trajectory labeling
+
         for arm in arms:
             prompt = build_prompt(q, arm.system_prompt)
             prompts.append(prompt)
-            
-            # Create sampling params for this arm's temperature
+            arm_names.append(arm.name)
+
+            # Create sampling params for this arm's temperature + seed
+            seed = arm.extra_cfg.get("seed", 42) if arm.extra_cfg else 42
             sampling_params_list.append(
                 SamplingParams(
                     temperature=arm.temp,
                     top_p=arm.top_p,
                     max_tokens=512,
+                    seed=seed,  # Reproducible generation
                     stop_token_ids=[],  # Abel uses default EOS
                 )
             )
@@ -141,14 +141,15 @@ def main():
         # Downstream functions (compute_rewards_for_question, s_end_for_question)
         # expect to call extract_answer on the full text
         trajectories = []
-        for output in outputs:
+        for output, arm_name in zip(outputs, arm_names):
             text = output.outputs[0].text.strip()
-            
+
             trajectories.append(Trajectory(
                 text=text,
                 reasoning=text,
                 answer=text,  # Store full text, not extract_answer(text)
                 num_tokens=len(text.split()),
+                arm_name=arm_name,  # Track which arm generated this
             ))
 
         # Compute Regime W rewards for all trajectories
@@ -163,10 +164,10 @@ def main():
             # Extract and normalize answer for correctness check
             pred_normalized = normalize_answer(extract_answer(t.answer))
             is_correct = (pred_normalized == gold_normalized) and (gold_normalized != "")
-            
+
             # Extract answer for JSONL output (not full text)
             extracted_answer = extract_answer(t.answer)
-            
+
             trajectory_records.append({
                 "full_text": t.text,
                 "answer": extracted_answer,  # Store extracted answer in output
@@ -174,6 +175,7 @@ def main():
                 "num_tokens": t.num_tokens,
                 "reward": float(r),
                 "correct": bool(is_correct),
+                "arm_name": t.arm_name,  # Track which arm generated this
             })
 
         # Build rollout record

@@ -159,13 +159,14 @@ def main():
                     # Decode response only (exclude prompt)
                     response_ids = gen[0][arm_input["input_ids"].shape[1]:]
                     text = tokenizer.decode(response_ids, skip_special_tokens=True)
-                    
+
                     # Create Trajectory object (answer=full text, not extracted)
                     trajectories.append(Trajectory(
                         text=text,
                         reasoning=text,
                         answer=text,  # Store full text for downstream extract_answer calls
                         num_tokens=len(text.split()),
+                        arm_name=arm.name,  # Track which arm generated this
                     ))
 
             # Compute Regime W rewards for all trajectories
@@ -180,10 +181,10 @@ def main():
                 # Extract answer from full text for correctness check
                 pred_normalized = normalize_answer(extract_answer(t.answer))
                 is_correct = (pred_normalized == gold_normalized) and (gold_normalized != "")
-                
+
                 # Extract answer for JSONL output
                 extracted_answer = extract_answer(t.answer)
-                
+
                 trajectory_records.append({
                     "full_text": t.text,
                     "answer": extracted_answer,
@@ -191,6 +192,7 @@ def main():
                     "num_tokens": t.num_tokens,
                     "reward": float(r),
                     "correct": bool(is_correct),
+                    "arm_name": t.arm_name,  # Track which arm generated this
                 })
 
             # Build rollout record
