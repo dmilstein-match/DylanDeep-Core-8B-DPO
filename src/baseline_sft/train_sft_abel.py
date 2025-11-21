@@ -17,7 +17,7 @@ torch.backends.cuda.enable_mem_efficient_sdp(True)
 
 BASE_MODEL = "GAIR/Abel-7B-002"
 TRAIN_PATH = "data/gsm8k_train.jsonl"
-OUTPUT_DIR = "checkpoints/abel_sft_lora"
+OUTPUT_DIR = "checkpoints/abel_sft_maudlin_lora"
 
 
 @dataclass
@@ -39,16 +39,17 @@ def load_gsm8k(path: str) -> List[TrainExample]:
 
 
 def formatting_func(example):
-    """Format single example as tutoring-style prompt with step-by-step solution."""
+    """Format single example with maudlin-style prompt (reflective reasoning)."""
     q = example["question"]
     a = example["answer"]
-    
+
     prompt = (
-        "You are a careful math tutor. Solve the problem step-by-step, "
-        "then give the final answer in the format '#### 42'.\n\n"
+        "You are a reflective math reasoner. "
+        "Explain your reasoning and highlight any steps that might be fragile. "
+        "End with 'Answer: <number>'.\n\n"
         f"Problem:\n{q}\n\nSolution:\n{a}"
     )
-    return prompt
+    return [prompt]  # TRL requires list return
 
 
 def main():
@@ -106,6 +107,7 @@ def main():
         gradient_accumulation_steps=2,
         learning_rate=5e-5,
         warmup_steps=100,
+        max_seq_length=1024,  # Explicit to avoid warning
         bf16=use_bf16,
         fp16=not use_bf16,
         logging_steps=10,
