@@ -106,6 +106,7 @@ def main():
         gradient_accumulation_steps=2,
         learning_rate=5e-5,
         warmup_steps=100,
+        max_seq_length=1024,  # Explicit to avoid warning
         bf16=use_bf16,
         fp16=not use_bf16,
         logging_steps=10,
