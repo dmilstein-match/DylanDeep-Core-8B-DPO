@@ -48,7 +48,7 @@ def formatting_func(example):
         "then give the final answer in the format '#### 42'.\n\n"
         f"Problem:\n{q}\n\nSolution:\n{a}"
     )
-    return prompt
+    return [prompt]  # TRL 0.11.4 requires list return
 
 
 def main():
