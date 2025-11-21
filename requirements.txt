@@ -1,8 +1,8 @@
-transformers[torch]
-datasets
-accelerate
-peft
-trl
-bitsandbytes
-sentencepiece
-numpy
+transformers[torch]==4.45.2
+datasets==2.20.0
+accelerate==0.34.2
+peft==0.13.0
+trl==0.11.4
+bitsandbytes==0.44.1
+sentencepiece==0.2.0
+numpy==1.24.3
