@@ -117,10 +117,10 @@ def main():
         gradient_checkpointing_kwargs={"use_reentrant": False},
     )
 
-    # Create trainer (TRL 0.25.1 compatibility)
+    # Create trainer (TRL 0.11.4 compatibility)
     trainer = SFTTrainer(
         model=model,
-        processing_class=tokenizer,
+        tokenizer=tokenizer,
         peft_config=lora_config,
         train_dataset=dataset,
         formatting_func=formatting_func,
