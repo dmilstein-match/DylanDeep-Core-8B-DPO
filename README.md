@@ -66,7 +66,7 @@ accelerate launch src/rl_training/train_dpo_coherence.py
   title={Counterfactual Probing for Robust Mathematical Reasoning},
   author={DylanDeep},
   year={2024},
-  url={https://github.com/dmilstein-match/looper-math-platinum-8b}
+  url={https://github.com/dmilstein-match/DylanDeep-Core-8B-DPO}
 }
 ```
 
