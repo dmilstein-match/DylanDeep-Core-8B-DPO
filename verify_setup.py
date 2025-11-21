@@ -96,7 +96,7 @@ def main():
         print("   git push")
         print("\n2. On Lambda GPU:")
         print("   git clone <your-repo-url>")
-        print("   cd looper-math-platinum-8b")
+        print("   cd DylanDeep-Core-8B-DPO")
         print("   pip install -r requirements.txt")
         print("   python -m src.baseline_sft.prepare_data")
         print("   python -m src.baseline_sft.train_sft")
