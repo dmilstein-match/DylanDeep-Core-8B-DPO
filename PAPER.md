@@ -22,22 +22,13 @@ We generate diverse reasoning trajectories using prompt variants that elicit dif
 
 Each variant is sampled at multiple temperatures to generate diverse trajectories.
 
-### 2.2 Coherence Scoring
+### 2.2 Trajectory Selection
 
-For each problem, we collect multiple trajectories across variants and compute:
-
-- **Answer Agreement**: Pairwise agreement on final answers
-- **Path Coherence**: Similarity of reasoning chains
-- **Combined Score**: Weighted combination for ranking trajectories
+For each problem, we collect multiple trajectories across variants and rank them using quality metrics that capture both answer correctness and reasoning robustness.
 
 ### 2.3 Preference Pair Construction
 
-We construct two types of preference pairs:
-
-1. **Correctness pairs**: Correct answer vs. incorrect answer (regardless of reasoning style)
-2. **Coherence pairs**: Among correct trajectories, prefer those with higher coherence scores
-
-This "correctness-first" strategy ensures the model learns to get answers right before optimizing explanation quality.
+We construct preference pairs that prioritize correctness while also rewarding high-quality reasoning. This ensures the model learns to get answers right before optimizing explanation quality.
 
 ### 2.4 DPO Training
 
