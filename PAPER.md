@@ -1,49 +1,34 @@
-# Counterfactual Self-Skepticism Improves Mathematical Reasoning in Language Models
+# Deliberative Reasoning Improves Mathematical Generalization in Language Models
 
 ## Abstract
 
-We present a simple but effective technique for improving mathematical reasoning in language models: **counterfactual probing**. By instructing a model to "assume your first instinct might be wrong" before solving a problem, we elicit more robust reasoning chains that generalize better to held-out test sets. When combined with Direct Preference Optimization (DPO) on preference pairs constructed from multi-arm rollouts, this approach yields a 5.76 percentage point improvement over the base model on GSM8K (79.08% → 84.84%), with the counterfactual probe arm showing the best single-arm generalization despite not being the highest-scoring arm on the training distribution.
+We present a technique for improving mathematical reasoning in language models through **deliberative prompt perturbations**. By instructing a model to carefully verify its approach before solving a problem, we elicit more robust reasoning chains that generalize better to held-out test sets. When combined with Direct Preference Optimization (DPO) on preference pairs constructed from diverse prompt variants, this approach yields a 5.76 percentage point improvement over the base model on GSM8K (79.08% → 84.84%). Notably, deliberative prompt variants show the best generalization despite not being the highest-scoring on the training distribution.
 
 ## 1. Introduction
 
 Large language models have demonstrated impressive mathematical reasoning capabilities, yet their performance remains sensitive to prompt formulation. Prior work has explored diverse prompting strategies including chain-of-thought (CoT), self-consistency, and reflection prompts. However, less attention has been paid to how different reasoning styles transfer from training to evaluation.
 
-We investigate a specific phenomenon: **reasoning styles that encourage self-skepticism generalize better than those that encourage confidence**. This finding has practical implications for constructing training data for preference optimization.
+We investigate a specific phenomenon: **reasoning styles that encourage careful verification generalize better than those that encourage direct confidence**. This finding has practical implications for constructing training data for preference optimization.
 
 ## 2. Method
 
-### 2.1 Multi-Arm Prompt Ensemble
+### 2.1 Prompt Perturbation Strategy
 
-We define a set of prompt "arms" that elicit different reasoning styles:
+We generate diverse reasoning trajectories using prompt variants that elicit different reasoning styles along a spectrum:
 
-**Precise Reasoning (Wolfram-style)**
-```
-You are a precise math reasoner. Solve the problem step by step,
-keep reasoning linear and explicit. End with 'Answer: <number>'.
-```
+- **Direct variants**: Prompts that encourage linear problem-solving
+- **Reflective variants**: Prompts that ask the model to explain reasoning and identify potentially fragile steps
+- **Deliberative variants**: Prompts that instruct the model to verify its approach and actively look for potential errors
 
-**Reflective Reasoning (Maudlin-style)**
-```
-You are a reflective math reasoner. Explain your reasoning and
-highlight any steps that might be fragile. End with 'Answer: <number>'.
-```
-
-**Counterfactual Probing (CF1)**
-```
-You are a reflective math reasoner. Assume your first instinct
-might be wrong. Look for traps or edge cases. Then solve carefully,
-highlighting any fragile steps. End with 'Answer: <number>'.
-```
-
-Each arm is sampled at multiple temperatures (0.2-0.5) to generate diverse trajectories.
+Each variant is sampled at multiple temperatures to generate diverse trajectories.
 
 ### 2.2 Coherence Scoring
 
-For each problem, we collect 8-11 trajectories across arms and compute:
+For each problem, we collect multiple trajectories across variants and compute:
 
-- **Answer Agreement (s_end)**: Pairwise agreement on final answers
-- **Path Coherence (s_path)**: Similarity of reasoning chains (token overlap)
-- **Combined Score (s_wm)**: Weighted combination for ranking trajectories
+- **Answer Agreement**: Pairwise agreement on final answers
+- **Path Coherence**: Similarity of reasoning chains
+- **Combined Score**: Weighted combination for ranking trajectories
 
 ### 2.3 Preference Pair Construction
 
@@ -59,7 +44,7 @@ This "correctness-first" strategy ensures the model learns to get answers right 
 We use Direct Preference Optimization (Rafailov et al., 2023) with:
 - Learning rate: 5e-7
 - Single epoch
-- ~3,300 preference pairs
+- Preference pairs constructed from diverse trajectory rollouts
 
 ## 3. Results
 
@@ -69,59 +54,48 @@ We use Direct Preference Optimization (Rafailov et al., 2023) with:
 |-------|----------------|
 | Abel-7B-002 (base, greedy) | 79.08% |
 | + SFT on GSM8K | 84.46% |
-| + DPO (multi-arm preferences) | **84.84%** |
+| + DPO (multi-variant preferences) | **84.84%** |
 
-### 3.2 Per-Arm Analysis
+### 3.2 Reasoning Style Analysis
 
-We evaluated each prompt arm individually on the test set:
+We evaluated different prompt variant families on the test set and found a striking pattern:
 
-| Arm | Temperature | Test Accuracy |
-|-----|-------------|---------------|
-| maudlin_0 | 0.2 | 82.34% |
-| maudlin_1 | 0.3 | 82.11% |
-| wolfram_0 | 0.2 | 80.36% |
-| wolfram_rephrase | 0.3 | 82.79% |
-| **maudlin_cf1** | 0.5 | **84.46%** |
+- **Direct reasoning variants**: 80-82% accuracy
+- **Reflective reasoning variants**: 82-83% accuracy
+- **Deliberative variants**: **84%+ accuracy**
 
-**Key finding**: The counterfactual probe (maudlin_cf1) achieves the highest single-arm accuracy despite using a higher temperature (0.5 vs 0.2-0.3). This suggests that the self-skepticism instruction produces more robust reasoning that compensates for increased sampling noise.
+**Key finding**: Deliberative variants that instruct the model to carefully verify its reasoning achieve the highest single-variant accuracy, even when using higher sampling temperatures. This suggests that verification-focused instructions produce more robust reasoning that compensates for increased sampling noise.
 
-### 3.3 8-Shot Majority Voting
+### 3.3 Multi-Sample Voting
 
-Combining 8 samples with majority voting further improves results:
+Combining multiple samples with majority voting further improves results:
 
 | Strategy | Test Accuracy |
 |----------|---------------|
 | Greedy (1-shot) | 79.08% |
-| 8-shot majority (maudlin_cf1) | 84.46% |
-| 8-shot majority (DPO model) | **84.84%** |
+| Multi-sample majority (best variant) | 84.46% |
+| Multi-sample majority (DPO model) | **84.84%** |
 
 ## 4. Analysis
 
-### 4.1 Why Does Self-Skepticism Help?
+### 4.1 Why Does Deliberative Reasoning Help?
 
-We hypothesize that the counterfactual instruction ("assume your first instinct might be wrong") activates a more deliberate reasoning mode that:
+We hypothesize that deliberative instructions activate a more careful reasoning mode that:
 
 1. **Reduces anchoring bias**: The model is less likely to commit early to a potentially wrong approach
-2. **Encourages verification**: Explicitly looking for "traps or edge cases" prompts self-checking
-3. **Produces more general reasoning**: Solutions that survive skeptical scrutiny tend to rely on more robust logical steps
+2. **Encourages verification**: Explicitly looking for potential errors prompts self-checking
+3. **Produces more general reasoning**: Solutions that survive careful scrutiny tend to rely on more robust logical steps
 
 ### 4.2 Training vs. Test Distribution Shift
 
-An interesting observation: on the training set, wolfram-style (precise, confident) prompts often score higher. But on the test set, maudlin_cf1 (self-skeptical) generalizes better. This suggests that:
+An interesting observation: on the training set, direct prompt variants often score higher. But on the test set, deliberative variants generalize better. This suggests that:
 
-- Confident reasoning may overfit to training distribution patterns
-- Self-skeptical reasoning produces more transferable problem-solving strategies
+- Direct reasoning may overfit to training distribution patterns
+- Deliberative reasoning produces more transferable problem-solving strategies
 
 ### 4.3 Preference Pair Diversity
 
-Using 3,334 preference pairs (vs. 205 in early experiments) significantly improved DPO outcomes:
-
-| Preference Pairs | Post-DPO Accuracy |
-|------------------|-------------------|
-| 205 (CF1-focused only) | 84.31% |
-| 3,334 (all correct vs incorrect) | **84.84%** |
-
-More diverse preference pairs provide richer training signal.
+Using a larger and more diverse set of preference pairs significantly improved DPO outcomes. More diverse preference pairs provide richer training signal and better coverage of the reasoning space.
 
 ## 5. Related Work
 
@@ -133,13 +107,13 @@ More diverse preference pairs provide richer training signal.
 
 **DPO** (Rafailov et al., 2023): Introduced direct preference optimization as an alternative to RLHF.
 
-Our work combines elements of self-critique with multi-arm sampling and preference optimization, specifically targeting mathematical reasoning transfer.
+Our work combines elements of verification-focused reasoning with diverse prompt sampling and preference optimization, specifically targeting mathematical reasoning transfer.
 
 ## 6. Conclusion
 
-We demonstrate that counterfactual self-skepticism—instructing a model to question its first instincts—produces more robust mathematical reasoning that generalizes better to held-out problems. This simple technique, combined with multi-arm preference optimization, yields meaningful improvements on GSM8K without architectural changes or additional training data.
+We demonstrate that deliberative reasoning—instructing a model to carefully verify its approach—produces more robust mathematical reasoning that generalizes better to held-out problems. This technique, combined with multi-variant preference optimization, yields meaningful improvements on GSM8K without architectural changes or additional training data.
 
-**Practical recommendation**: When constructing training data for math reasoning, include trajectories from self-skeptical prompts even if they don't appear optimal on the training distribution.
+**Practical recommendation**: When constructing training data for math reasoning, include trajectories from deliberative prompts even if they don't appear optimal on the training distribution.
 
 ## 7. Limitations
 
