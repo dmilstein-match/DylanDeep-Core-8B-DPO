@@ -1,0 +1,76 @@
+---
+license: other
+license_name: cc-by-nc-nd-4.0
+license_link: https://creativecommons.org/licenses/by-nc-nd/4.0/
+language:
+  - en
+library_name: transformers
+tags:
+  - math
+  - reasoning
+  - dpo
+  - llama
+  - gsm8k
+datasets:
+  - gsm8k
+base_model: TIGER-Lab/Abel-7B-002
+model_type: llama
+pipeline_tag: text-generation
+model-index:
+  - name: DylanDeep-Core-8B-DPO
+    results:
+      - task:
+          type: text-generation
+          name: Math Word Problems
+        dataset:
+          name: GSM8K
+          type: gsm8k
+          split: test
+        metrics:
+          - type: accuracy
+            value: 84.84
+            name: Accuracy
+            verified: false
+---
+
+# DylanDeep-Core-8B-DPO
+
+## Model Description
+
+DylanDeep-Core-8B-DPO is a mathematical reasoning model fine-tuned using Direct Preference Optimization (DPO). The model demonstrates improved generalization on math word problems through deliberative prompt perturbation training.
+
+## Training
+
+- **Base Model**: TIGER-Lab/Abel-7B-002
+- **Training Method**: DPO (Direct Preference Optimization)
+- **Training Data**: GSM8K with diverse trajectory rollouts
+
+## Performance
+
+| Benchmark | Accuracy |
+|-----------|----------|
+| GSM8K     | 84.84%   |
+
+## Usage
+
+```python
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+model = AutoModelForCausalLM.from_pretrained("dylxnmyl/DylanDeep-Core-8B-DPO")
+tokenizer = AutoTokenizer.from_pretrained("dylxnmyl/DylanDeep-Core-8B-DPO")
+
+prompt = "Solve step by step: If John has 5 apples and buys 3 more, how many does he have?"
+inputs = tokenizer(prompt, return_tensors="pt")
+outputs = model.generate(**inputs, max_new_tokens=256)
+print(tokenizer.decode(outputs[0]))
+```
+
+## Limitations
+
+- Optimized for GSM8K-style math word problems
+- Performance on other math benchmarks may vary
+- Based on LLaMA architecture with associated limitations
+
+## License
+
+CC BY-NC-ND 4.0 + LLaMA 2 Community License
