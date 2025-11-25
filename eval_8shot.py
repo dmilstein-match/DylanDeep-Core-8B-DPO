@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-8-Shot Evaluation with Maudlin_0 Configuration
-Generates 8 answers per question with temp=0.2, takes majority vote
+8-Shot Evaluation Script
+Generates 8 answers per question with optimized temperature, takes majority vote
 Expected accuracy: 80%+
 """
 import json
@@ -19,11 +19,11 @@ torch.backends.cuda.enable_flash_sdp(True)
 
 BASE_MODEL = "GAIR/Abel-7B-002"
 LORA_PATH = "checkpoints/abel_coherence_lora_v3"
-OUTPUT_FILE = "outputs/abel_coherence_8shot_maudlin0.jsonl"
+OUTPUT_FILE = "outputs/abel_coherence_8shot_eval.jsonl"
 BATCH_SIZE = 4  # Process 4 questions at a time (each generates 8 answers)
 
 def build_prompt(question: str) -> str:
-    """Maudlin_0 style prompt - concise and clear"""
+    """Build evaluation prompt - concise and clear"""
     return (
         "Solve this math problem step-by-step. Show your work clearly and concisely.\n"
         "End with 'Answer: [number]'.\n\n"
@@ -43,10 +43,10 @@ def majority_vote(answers):
 
 def main():
     print("=" * 80)
-    print("8-Shot Evaluation with Maudlin_0 Configuration")
+    print("8-Shot Evaluation")
     print("=" * 80)
     print(f"\nConfiguration:")
-    print(f"  Temperature: 0.2 (maudlin_0 optimal)")
+    print(f"  Temperature: 0.2")
     print(f"  Shots per question: 8")
     print(f"  Strategy: Majority voting")
     print(f"  Batch size: {BATCH_SIZE}")
@@ -74,7 +74,7 @@ def main():
     model.eval()
 
     # Load test dataset
-    print("\nLoading GSM8K Platinum test set...")
+    print("\nLoading GSM8K test set...")
     dataset = load_dataset("gsm8k", "main", split="test")
     print(f"Loaded {len(dataset)} test examples\n")
 
@@ -100,13 +100,13 @@ def main():
             prompt = build_prompt(question)
             inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
 
-            # Generate 8 answers with maudlin_0 settings (temp=0.2)
+            # Generate 8 answers with temp=0.2
             with torch.no_grad():
                 outputs = model.generate(
                     **inputs,
                     max_new_tokens=512,
                     do_sample=True,
-                    temperature=0.2,  # Maudlin_0 optimal temp
+                    temperature=0.2,
                     top_p=0.95,
                     num_return_sequences=8,  # 8-shot
                     pad_token_id=tokenizer.pad_token_id,
