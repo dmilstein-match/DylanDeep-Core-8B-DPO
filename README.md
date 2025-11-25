@@ -1,10 +1,10 @@
-# Counterfactual Probing for Math Reasoning
+# DylanDeep-Core-8B-DPO
 
-A research framework for improving mathematical reasoning in language models through multi-arm prompt ensembles and preference optimization.
+A research framework for improving mathematical reasoning in language models through deliberative prompt perturbations and preference optimization.
 
 ## Key Finding
 
-**Counterfactual self-skepticism improves generalization.** Prompting a model to "assume your first instinct might be wrong" before solving leads to more robust reasoning that transfers better to held-out test sets.
+**Deliberative reasoning improves generalization.** Using prompt perturbation variants that encourage careful verification leads to more robust reasoning that transfers better to held-out test sets.
 
 ## Results
 
@@ -14,14 +14,14 @@ A research framework for improving mathematical reasoning in language models thr
 | + SFT | 84.46% |
 | + DPO | **84.84%** |
 
-Evaluation uses 8-shot majority voting across prompt variants.
+Evaluation uses multi-sample majority voting.
 
 ## Method Overview
 
-1. **Multi-Arm Rollout Collection**: Generate solutions using diverse prompt strategies (precise reasoning, reflective reasoning, counterfactual probing)
-2. **Coherence Scoring**: Measure agreement across reasoning paths
-3. **Preference Pair Construction**: Create training pairs from correct vs incorrect solutions, plus coherence-based pairs among correct solutions
-4. **DPO Training**: Optimize for both correctness and reasoning quality
+1. **Prompt Perturbation Variants**: Generate diverse reasoning trajectories using different prompt strategies
+2. **Trajectory Selection**: Rank solutions using quality metrics
+3. **Preference Pair Construction**: Create training pairs that prioritize correctness and reasoning quality
+4. **DPO Training**: Optimize for robust mathematical reasoning
 
 ## Repository Structure
 
@@ -62,8 +62,8 @@ accelerate launch src/rl_training/train_dpo_coherence.py
 ## Citation
 
 ```bibtex
-@misc{dylandeep2024counterfactual,
-  title={Counterfactual Probing for Robust Mathematical Reasoning},
+@misc{dylandeep2024deliberative,
+  title={Deliberative Reasoning Improves Mathematical Generalization in Language Models},
   author={DylanDeep},
   year={2024},
   url={https://github.com/dmilstein-match/DylanDeep-Core-8B-DPO}
