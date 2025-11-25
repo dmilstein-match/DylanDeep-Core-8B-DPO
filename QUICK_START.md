@@ -5,7 +5,7 @@
 All scripts are already optimized for **maximum safe throughput** on 8× H100 GPUs:
 
 ### vLLM Rollout Collection
-- **Multi-question batching**: 16 questions × 11 arms = 176 sequences/batch
+- **Multi-question batching**: Optimized for maximum throughput
 - **Optimized context**: max_model_len=2048 (vs 8192 default)
 - **CUDA graphs**: Enabled for 20-30% speedup
 - **Memory utilization**: 95% (76GB/80GB per GPU)
@@ -77,13 +77,13 @@ cat outputs/abel_coherence_platinum_eval.jsonl | jq .correct | grep true | wc -l
 Edit `run_complete_pipeline.sh` line 69:
 ```bash
 # Change from 16 to 24 or 32 (may approach memory limits)
---question_batch_size 32  # 32 questions × 11 arms = 352 sequences
+--question_batch_size 32
 ```
 
 ### If You Hit OOM (Out of Memory)
 Reduce batch size in vLLM script:
 ```bash
---question_batch_size 8  # Conservative: 8 × 11 = 88 sequences
+--question_batch_size 8  # Conservative batch size
 ```
 
 Or reduce DPO batch size in `src/rl_training/train_dpo_coherence.py`:
